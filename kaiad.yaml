@@ -1,101 +1,90 @@
-# Kaiad deployment config for video.synload.com
-# Target: dedicated VM (kaiad docker agent) — NOT synload-k8s
-# Repo: git@github.com:firestar/video.git
+# Kaiad pipelines for video.synload.com on the dedicated VM video-01 (Kaiad agent `video-01`, docker runtime).
+# NOT synload-k8s. Infra runbook: ~/infrabot/video-seed/README.md on infra-01.
+#
+# One Kaiad service per pipeline (multi-pipeline yaml => each service selects its pipeline by pipelineName).
+# All on repo git@github.com:firestar/video.git, branch main, bound to agent video-01. The Kaiad SERVICE NAME is the
+# container's DNS alias on `kaiad-lb-net`, which the edge proxy addresses it by:
+#
+#   Kaiad service    pipeline   reached as
+#   video-backend    backend    video-backend:3000   (Axum API, /api/* and /health)
+#   video-frontend   frontend   video-frontend:3001  (Next.js)
+#   video-worker     worker     (no listener; ffmpeg transcode worker, same image as backend)
+#
+# Kaiad's poller builds EVERY service on each new commit. Kaiad builds with a plain legacy `docker build`
+# (no BuildKit) on its central builder, then the agent pulls from panel.kaiad.dev.
+#
+# NOT in this file (infra-managed on video-01, /opt/video-infra, joined to kaiad-lb-net):
+#   video-postgres:5432 (PostgreSQL 16), video-redis:6379 (Redis 7, password), video-garage:3900 (Garage, S3 API),
+#   video-edge (nginx, public 208.98.54.43:80/443 behind Cloudflare): /api/ + /health -> video-backend:3000,
+#   /media/ -> Garage (presigned PUT/GET, path-style), / -> video-frontend:3001. Kaiad's own kaiad-lb is not used
+#   (no path routing, 1 MB body limit), so there is no `domains:` here.
+#
+# The app reads config ONLY from YT_* env vars (figment prefix "YT_"), so names below are YT_*.
+# Secrets: every secretEnv value is read by the agent from /etc/kaiad/secrets/<secret>/<key> on video-01
+# (root:kaiad 0640, written by infra). Nothing secret lives in this file.
+# S3 endpoint = https://video.synload.com (bucket path /media/). Inside kaiad-lb-net that name resolves to video-edge,
+# so server-side S3 traffic never leaves the VM, while presigned URLs are valid for browsers too. Requires path-style
+# S3 addressing in the storage crate (force_path_style).
 
-name: video
-domain: video.synload.com
-
-build:
-  context: .
-  dockerfile: Dockerfile
+version: 1
 
 services:
   backend:
-    image: video-backend
-    build:
-      context: backend
-      dockerfile: Dockerfile
+    namespace: video
+    dockerfile:
+      path: backend/Dockerfile
+      context: .
     ports:
-      - containerPort: 3000
-    env:
-      DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: ${REDIS_URL}
-      JWT_SECRET: ${JWT_SECRET}
-      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
-      MINIO_BUCKET: ${MINIO_BUCKET}
-    healthcheck:
-      path: /health
-      port: 3000
-      initialDelaySeconds: 10
-      periodSeconds: 15
+      - port: 3000
+        name: http
+    runtime:
+      env:
+        YT_LISTEN: 0.0.0.0:3000
+        YT_S3_REGION: garage
+        YT_CORS_ORIGINS: https://video.synload.com
+        YT_LOG_LEVEL: info
+      secretEnv:
+        - { name: YT_DATABASE_URL,  secret: video, key: database_url }
+        - { name: YT_REDIS_URL,     secret: video, key: redis_url }
+        - { name: YT_JWT_SECRET,    secret: video, key: jwt_secret }
+        - { name: YT_S3_ENDPOINT,   secret: video, key: s3_endpoint }
+        - { name: YT_S3_BUCKET,     secret: video, key: s3_bucket }
+        - { name: YT_S3_ACCESS_KEY, secret: video, key: s3_access_key }
+        - { name: YT_S3_SECRET_KEY, secret: video, key: s3_secret_key }
 
-  frontend:
-    image: video-frontend
-    build:
-      context: frontend
-      dockerfile: Dockerfile
-    ports:
-      - containerPort: 3001
-    env:
-      NEXT_PUBLIC_API_URL: https://video.synload.com/api
-
+  # Same image as backend (backend/Dockerfile builds both binaries and installs ffmpeg); only the command differs.
   worker:
-    image: video-worker
-    build:
-      context: backend
-      dockerfile: Dockerfile.worker
-    env:
-      DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: ${REDIS_URL}
-      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
-      MINIO_BUCKET: ${MINIO_BUCKET}
+    namespace: video
+    dockerfile:
+      path: backend/Dockerfile
+      context: .
+    runtime:
+      command: ["worker"]
+      env:
+        YT_S3_REGION: garage
+        YT_LOG_LEVEL: info
+      secretEnv:
+        - { name: YT_DATABASE_URL,  secret: video, key: database_url }
+        - { name: YT_REDIS_URL,     secret: video, key: redis_url }
+        - { name: YT_S3_ENDPOINT,   secret: video, key: s3_endpoint }
+        - { name: YT_S3_BUCKET,     secret: video, key: s3_bucket }
+        - { name: YT_S3_ACCESS_KEY, secret: video, key: s3_access_key }
+        - { name: YT_S3_SECRET_KEY, secret: video, key: s3_secret_key }
 
-  postgres:
-    image: postgres:16-alpine
+  # frontend/Dockerfile must listen on 3001 and accept the build arg below: NEXT_PUBLIC_* values are inlined at
+  # `next build` time, not read at runtime. Paths in the code already start with /api, so the base has no /api suffix.
+  frontend:
+    namespace: video
+    dockerfile:
+      path: frontend/Dockerfile
+      context: frontend
+      args:
+        NEXT_PUBLIC_API_URL: https://video.synload.com
     ports:
-      - containerPort: 5432
-    env:
-      POSTGRES_DB: video
-      POSTGRES_USER: video
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-    volume: /var/lib/postgresql/data
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - containerPort: 6379
-    volume: /data
-
-  minio:
-    image: minio/minio
-    ports:
-      - containerPort: 9000
-      - containerPort: 9001
-    env:
-      MINIO_ROOT_USER: ${MINIO_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
-    args: server /data --console-address ":9001"
-    volume: /data
-
-ingress:
-  host: video.synload.com
-  tls: true
-  rules:
-    - path: /api
-      backend: backend
-      port: 3000
-    - path: /
-      backend: frontend
-      port: 3001
-
-volumes:
-  - name: video-postgres
-    host: ./data/postgres
-  - name: video-minio
-    host: ./data/minio
-  - name: video-redis
-    host: ./data/redis
+      - port: 3001
+        name: http
+    runtime:
+      env:
+        NODE_ENV: production
+        PORT: "3001"
+        HOSTNAME: 0.0.0.0
