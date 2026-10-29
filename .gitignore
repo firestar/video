@@ -35,5 +35,7 @@ reset-migrations.sql
 # Misc
 target/
 node_modules/
-package-lock.json
+# frontend/package-lock.json must be committed: frontend/Dockerfile runs `npm ci`.
+/package-lock.json
+pgtest/package-lock.json
 "
