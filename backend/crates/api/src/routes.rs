@@ -261,27 +261,75 @@ pub async fn get_video(
     })))
 }
 
-/// GET /api/videos/{id}/comments
-pub async fn list_comments(
+/// GET /api/comments/{videoId} — threaded list (top-level + replies),
+/// batch-joined with the author's name + avatar.
+pub async fn list_comments_threaded(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-    Query(q): Query<serde_json::Value>,
+    Path(video_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let limit = q
-        .get("limit")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(50)
-        .clamp(1, 200);
-    let offset = q
-        .get("offset")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
-    let rows = comments::list_for_video(&state.db, id, limit, offset).await?;
-    let comments: Vec<domain::Comment> = rows.into_iter().map(Into::into).collect();
-    Ok(Json(serde_json::to_value(comments).unwrap()))
+    // Confirm the video exists (404 otherwise).
+    let _ = videos::find_by_id(&state.db, video_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+
+    let nodes = comments::list_for_video_threaded(&state.db, video_id, 200, 0).await?;
+
+    // Collect all user ids (top-level + replies).
+    let mut user_ids: Vec<Uuid> = Vec::new();
+    for n in &nodes {
+        user_ids.push(n.comment.user_id);
+        for r in &n.replies {
+            user_ids.push(r.user_id);
+        }
+    }
+    let user_ids: Vec<Uuid> = user_ids
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    // Batch-load users.
+    let user_rows = users::find_by_ids(&state.db, &user_ids).await?;
+    let user_map: std::collections::HashMap<Uuid, (String, Option<String>)> =
+        user_rows.into_iter().map(|u| (u.id, (u.name, u.avatar_url))).collect();
+
+    let enrich = |c: &domain::Comment| -> serde_json::Value {
+        let mut v = serde_json::to_value(c).unwrap();
+        if let Some(obj) = v.as_object_mut() {
+            let author = user_map.get(&c.user_id);
+            obj.insert(
+                "authorName".into(),
+                serde_json::json!(author.map(|(n, _)| n.clone()).unwrap_or_else(|| "Unknown".to_string())),
+            );
+            obj.insert(
+                "authorAvatar".into(),
+                serde_json::json!(author.map(|(_, a)| a.clone())),
+            );
+        }
+        v
+    };
+
+    let items: Vec<serde_json::Value> = nodes
+        .iter()
+        .map(|n| {
+            let mut top = enrich(&n.comment);
+            let replies: Vec<serde_json::Value> =
+                n.replies.iter().map(|r| enrich(r)).collect();
+            if let Some(obj) = top.as_object_mut() {
+                obj.insert("replies".into(), serde_json::json!(replies));
+            }
+            top
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "comments": items,
+        "count": items.len(),
+    })))
 }
 
-/// POST /api/videos/{id}/comments
+/// POST /api/videos/{id}/comments — create a comment (top-level or a reply
+/// to a top-level comment via `parentId`).
 pub async fn create_comment(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -291,8 +339,66 @@ pub async fn create_comment(
     if let Err(e) = req.validate() {
         return Err(ApiError::BadRequest(e));
     }
-    let row = comments::create(&state.db, id, claims.sub, &req).await?;
+    // The video must exist.
+    let _ = videos::find_by_id(&state.db, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let row = comments::create(&state.db, id, claims.sub, &req).await.map_err(|e| match e {
+        domain::CommentError::ParentNotFound => ApiError::NotFound,
+        domain::CommentError::WrongVideo => ApiError::BadRequest("reply must be on the same video".into()),
+        domain::CommentError::NotTopLevel => ApiError::BadRequest("can only reply to top-level comments".into()),
+    })?;
     Ok((StatusCode::CREATED, Json(row.into())))
+}
+
+/// DELETE /api/comments/{id} — author or video owner only; replies cascade.
+pub async fn delete_comment(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    let comment = comments::find_by_id(&state.db, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+
+    // Owner of the video may also delete any comment on it.
+    if comment.user_id != claims.sub {
+        let video = videos::find_by_id(&state.db, comment.video_id)
+            .await?
+            .ok_or(ApiError::NotFound)?;
+        let channel = channels::find_by_id(&state.db, video.channel_id)
+            .await?
+            .ok_or(ApiError::NotFound)?;
+        if channel.user_id != claims.sub {
+            return Err(ApiError::Forbidden);
+        }
+    }
+
+    let deleted = comments::delete(&state.db, id).await?;
+    if !deleted {
+        return Err(ApiError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST /api/comments/{id}/like — toggle a like on a comment.
+pub async fn toggle_comment_like(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let comment = comments::find_by_id(&state.db, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let already = likes::has_comment_liked(&state.db, claims.sub, comment.video_id, id).await?;
+    let liked = if already {
+        let _ = likes::unlike(&state.db, claims.sub, comment.video_id, Some(id)).await?;
+        false
+    } else {
+        let _ = likes::like(&state.db, claims.sub, comment.video_id, Some(id)).await?;
+        true
+    };
+    Ok(Json(serde_json::json!({ "liked": liked })))
 }
 
 /// GET /api/search?q=...
@@ -318,8 +424,22 @@ pub async fn search(
 /// POST /api/uploads/presign — presigned PUT URL for direct-to-bucket upload.
 pub async fn presign_upload(
     State(state): State<AppState>,
-    Json(req): Json<serde_json::Value>,
+    req: axum::extract::Request,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let token = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|s| s.to_string())
+        .ok_or(ApiError::Unauthorized("missing token".into()))?;
+    let _claims = auth::decode_token(&state.config.jwt_secret, &token)
+        .map_err(|e| ApiError::Unauthorized(e.to_string()))?;
+    let body: axum::body::Bytes = axum::body::to_bytes(req.into_body(), usize::MAX)
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("body: {e}")))?;
+    let req: serde_json::Value = serde_json::from_slice(&body)
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let file_name = req
         .get("file_name")
         .or_else(|| req.get("fileName"))

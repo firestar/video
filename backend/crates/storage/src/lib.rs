@@ -57,7 +57,7 @@ impl Storage {
             loader = loader.endpoint_url(ep);
         }
         let aws_config: SdkConfig = loader.load().await;
-        let client = Client::from_conf(aws_sdk_s3::Config::from(&aws_config));
+        let client = Client::from_conf(aws_sdk_s3::config::Builder::from(&aws_config).force_path_style(true).build());
         Ok(Self {
             client,
             bucket: bucket.to_string(),
