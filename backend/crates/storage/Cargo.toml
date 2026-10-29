@@ -1,0 +1,14 @@
+[package]
+name = "storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+aws-config.workspace = true
+aws-sdk-s3.workspace = true
+aws-types.workspace = true
+aws-credential-types = "1"
+aws-smithy-types.workspace = true
+bytes.workspace = true
+thiserror.workspace = true

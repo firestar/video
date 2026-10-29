@@ -1,0 +1,39 @@
+# Local dev secrets — never commit real values
+.env
+.env.*
+.env.local
+
+# Rust
+target/
+backend/target/
+
+# Node / Next.js
+node_modules/
+.next/
+
+# Misc
+*.log
+.sqlx/
+
+# Worker scratch / probes / build scripts
+*.sh
+chanlookup/
+fixchecksum/
+panicprobe/
+pgtest/
+sqlx-probe/
+redis-src.tar.gz
+redis-build/
+.fe8090/
+.peckboard/
+gen_sqlx_cache.py
+pgq.mjs
+pgraw.mjs
+s3mock3c.py
+reset-migrations.sql
+
+# Misc
+target/
+node_modules/
+package-lock.json
+"

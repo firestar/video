@@ -1,0 +1,84 @@
+[workspace]
+resolver = "2"
+members = [
+    "backend/crates/api",
+    "backend/crates/worker",
+    "backend/crates/domain",
+    "backend/crates/db",
+    "backend/crates/auth",
+    "backend/crates/storage",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+# path deps
+domain = { path = "backend/crates/domain" }
+auth = { path = "backend/crates/auth" }
+db = { path = "backend/crates/db" }
+storage = { path = "backend/crates/storage" }
+
+# core
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+futures = "0.3"
+bytes = "1"
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "chrono", "json", "migrate", "macros", "uuid"] }
+# sqlx (macros enables offline cache deserialization)
+
+# serde
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# auth
+jsonwebtoken = "9"
+argon2 = "0.6"
+
+# storage
+aws-sdk-s3 = "1"
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+
+# redis
+redis = { version = "0.29", features = ["tokio-comp", "connection-manager"] }
+
+# rate limiting
+govern = { version = "0.1", features = ["std"] }
+
+# errors
+thiserror = "2"
+anyhow = "1"
+
+# observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# config
+figment = { version = "0.10", features = ["env", "toml", "json"] }
+dotenvy = "0.15"
+
+# http
+aws-types = "1"
+aws-smithy-types = "1"
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "timeout"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# time
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# misc
+base64 = "0.22"
+rand = "0.8"
+validator = { version = "0.19", features = ["derive"] }
+mime_guess = "2"
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

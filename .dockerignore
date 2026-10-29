@@ -1,0 +1,19 @@
+# Build context is the project root (Dockerfile lives in backend/).
+# Keep only what the image needs.
+.git
+.next
+node_modules
+frontend
+pgtest
+sqlx-probe
+redis-build
+redis-src.tar.gz
+target
+backend/target
+*.sh
+*.tar.gz
+sqlx-probe
+.env
+.env.*
+.env.local
+*.md

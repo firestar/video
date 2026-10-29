@@ -1,0 +1,35 @@
+[package]
+name = "api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "api"
+path = "src/main.rs"
+
+[dependencies]
+domain.workspace = true
+auth.workspace = true
+db.workspace = true
+storage.workspace = true
+axum.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+figment.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+redis.workspace = true
+dotenvy.workspace = true
+sqlx.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true
+tower.workspace = true
