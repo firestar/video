@@ -91,14 +91,27 @@ pub async fn find_by_email(pool: &Pool, email: &str) -> Result<Option<UserRow>, 
         .bind(email)
         .fetch_optional(pool)
         .await?;
-    Ok(row.map(row_to_user).transpose()?)
+    row.map(row_to_user).transpose()
 }
 
+/// Look up a user by id.
 /// Look up a user by id.
 pub async fn find_by_id(pool: &Pool, id: Uuid) -> Result<Option<UserRow>, sqlx::Error> {
     let row = sqlx::query("SELECT * FROM users WHERE id = $1")
         .bind(id)
         .fetch_optional(pool)
         .await?;
-    Ok(row.map(row_to_user).transpose()?)
+    row.map(row_to_user).transpose()
+}
+
+/// Batch-load users by id (for attaching author info to comments).
+pub async fn find_by_ids(
+    pool: &Pool,
+    ids: &[Uuid],
+) -> Result<Vec<UserRow>, sqlx::Error> {
+    let rows = sqlx::query("SELECT * FROM users WHERE id = ANY($1)")
+        .bind(ids)
+        .fetch_all(pool)
+        .await?;
+    rows.into_iter().map(row_to_user).collect::<Result<Vec<_>, _>>()
 }

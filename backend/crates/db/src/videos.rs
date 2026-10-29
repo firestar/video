@@ -7,7 +7,7 @@ use domain::{Video, VideoCreate, VideoStatus};
 
 use sqlx::FromRow;
 
-#[derive(Debug, FromRow)]
+#[derive(Debug, Clone, FromRow)]
 pub struct VideoRow {
     pub id: Uuid,
     pub channel_id: Uuid,
@@ -89,6 +89,29 @@ pub async fn find_by_id(pool: &Pool, id: Uuid) -> Result<Option<VideoRow>, sqlx:
         .await
 }
 
+/// Fetch multiple videos by id (for batch-joining, e.g. the home feed).
+pub async fn find_by_id_all(
+    pool: &Pool,
+    ids: &[Uuid],
+) -> Result<Vec<VideoRow>, sqlx::Error> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = (1..=ids.len())
+        .map(|i| format!("${i}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        r#"SELECT * FROM videos WHERE id = ANY(ARRAY[{}])"#,
+        placeholders
+    );
+    let mut q = sqlx::query_as(sql.as_str());
+    for id in ids {
+        q = q.bind(*id);
+    }
+    q.fetch_all(pool).await
+}
+
 /// Worker finalization: set status, duration, size, thumbnail, publish time.
 pub async fn finalize(
     pool: &Pool,
@@ -146,6 +169,7 @@ pub enum VideoSort {
 
 impl VideoSort {
     /// Parse a query-string value ("newest" | "trending"); unknown -> default.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.trim().to_ascii_lowercase().as_str() {
             "trending" => Self::Trending,
@@ -204,18 +228,65 @@ pub async fn list_for_channel(
     .await
 }
 
-/// Full-text search over title/description.
+/// Full-text search over title/description (ready videos only).
 pub async fn search(pool: &Pool, query: &str, limit: i64) -> Result<Vec<VideoRow>, sqlx::Error> {
     sqlx::query_as(
         r#"
         SELECT * FROM videos
         WHERE status = 'ready'
-          AND search_vector @@ plainto_tsquery('simple', $1)
-        ORDER BY ts_rank(search_vector, plainto_tsquery('simple', $1)) DESC
+          AND search_vector @@ plainto_tsquery('english', $1)
+        ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
         LIMIT $2
         "#,
     )
     .bind(query)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+/// Used by the personalized home feed for the no-history / anonymous case and
+/// as the candidate pool when scoring.
+pub async fn trending_recent(
+    pool: &Pool,
+    limit: i64,
+) -> Result<Vec<VideoRow>, sqlx::Error> {
+    sqlx::query_as(
+        r#"
+        SELECT * FROM videos
+        WHERE status = 'ready'
+          AND published_at IS NOT NULL
+          AND published_at >= now() - interval '7 days'
+        ORDER BY view_count DESC, created_at DESC
+        LIMIT $1
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+/// Related videos: same channel OR sharing at least one tag, live only,
+/// excluding the given video, ordered by views.
+pub async fn find_related(
+    pool: &Pool,
+    exclude_id: Uuid,
+    limit: i64,
+) -> Result<Vec<VideoRow>, sqlx::Error> {
+    sqlx::query_as(
+        r#"
+        SELECT * FROM videos
+        WHERE id != $1
+          AND status = 'ready'
+          AND (
+              channel_id = (SELECT channel_id FROM videos WHERE id = $1)
+              OR tags && (SELECT tags FROM videos WHERE id = $1)
+          )
+        ORDER BY view_count DESC, published_at DESC NULLS LAST, created_at DESC
+        LIMIT $2
+        "#,
+    )
+    .bind(exclude_id)
     .bind(limit)
     .fetch_all(pool)
     .await

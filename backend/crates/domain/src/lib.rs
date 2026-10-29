@@ -15,7 +15,7 @@ pub mod video;
 pub use auth::*;
 pub use channel::*;
 pub use comment::*;
-pub use error::ApiError;
+pub use error::{ApiError, CommentError};
 pub use history::*;
 pub use like::*;
 pub use subscription::*;

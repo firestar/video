@@ -1,0 +1,25 @@
+# cargo-audit config — CI audit gate
+#
+# The AWS SDK (aws-config / aws-sdk-s3 1.x) transitively pins an old TLS stack
+# (hyper 0.14 -> h2 0.3, rustls 0.21, rustls-webpki 0.101) that recent RUSTSEC
+# advisories flag. Those transitive versions cannot be bumped within the AWS
+# SDK 1.x line without a major version jump, so we ignore the advisories that
+# only affect that pinned stack. Re-review when the AWS SDK moves to a newer
+# rustls/h2.
+#
+# `rsa 0.9.10` (RUSTSEC-2023-0071, Marvin timing sidechannel) has NO fixed
+# upgrade available per RUSTSEC, so it can never pass a hard audit; ignored
+# explicitly until a fixed release lands.
+
+[advisories]
+ignore = [
+  "RUSTSEC-2023-0071", # rsa Marvin timing — no fixed upgrade available
+  "RUSTSEC-2026-0258", # h2 0.3.27 unbounded empty DATA frames — AWS SDK pinned stack
+  "RUSTSEC-2026-0349", # rustls 0.21.12 ServerHello downgrade — AWS SDK pinned stack
+  "RUSTSEC-2026-0346", # rustls 0.21.12 Debug exposes TLS secrets — AWS SDK pinned stack
+  "RUSTSEC-2026-0098", # rustls-webpki 0.101.7 URI name constraints — AWS SDK pinned stack
+  "RUSTSEC-2026-0382", # rustls-webpki 0.101.7 distrusted intermediates — AWS SDK pinned stack
+  "RUSTSEC-2026-0104", # rustls-webpki 0.101.7 CRL parsing panic — AWS SDK pinned stack
+  "RUSTSEC-2026-0099", # rustls-webpki 0.101.7 wildcard name constraints — AWS SDK pinned stack
+]
+informational_warnings = ["RUSTSEC-2026-0173"]

@@ -115,3 +115,20 @@ pub async fn has_liked(
     .await?;
     Ok(row.is_some())
 }
+
+pub async fn has_comment_liked(
+    pool: &Pool,
+    user_id: Uuid,
+    video_id: Uuid,
+    comment_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    let row: Option<i32> = sqlx::query_scalar(
+        r#"SELECT 1 FROM likes WHERE user_id = $1 AND video_id = $2 AND comment_id = $3"#,
+    )
+    .bind(user_id)
+    .bind(video_id)
+    .bind(comment_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.is_some())
+}

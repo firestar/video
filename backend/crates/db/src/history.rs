@@ -69,6 +69,15 @@ pub async fn list_for_user(
     .await
 }
 
+/// Clear all watch-history rows for a user (DELETE /api/history).
+pub async fn clear_for_user(pool: &Pool, user_id: Uuid) -> Result<u64, sqlx::Error> {
+    let res = sqlx::query(r#"DELETE FROM watch_history WHERE user_id = $1"#)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected())
+}
+
 #[derive(Debug, FromRow)]
 pub struct ViewRecordRow {
     pub id: Uuid,

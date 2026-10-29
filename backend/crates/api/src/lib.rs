@@ -30,31 +30,42 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(routes::register),
         )
         .route("/api/auth/login", axum::routing::post(routes::login))
+        .route("/api/search", axum::routing::get(routes::search))
         .route(
             "/api/uploads/presign",
             axum::routing::post(routes::presign_upload),
         )
         .route("/api/videos/{id}", axum::routing::get(routes::get_video))
         .route(
-            "/api/videos/{id}/comments",
-            axum::routing::get(routes::list_comments),
+            "/api/videos/{id}/related",
+            axum::routing::get(routes::get_related_videos),
         )
         .route(
             "/api/videos/{id}/comments",
             axum::routing::post(routes::create_comment),
         )
-        .route("/api/search", axum::routing::get(routes::search))
+        // `{id}` = video id here; must match the param name used by
+        // DELETE /api/comments/{id} (matchit rejects differing names).
+        .route(
+            "/api/comments/{id}",
+            axum::routing::get(routes::list_comments_threaded),
+        )
         .layer(axum::middleware::from_fn(middleware::rate_limit))
+        .route("/api/home/feed", axum::routing::get(routes::home_feed))
         .with_state(state.clone());
 
     let protected_routes = Router::new()
         .route("/api/me", axum::routing::get(routes::me))
-        .route("/api/history", axum::routing::get(routes::history))
-        .route("/api/history", axum::routing::post(routes::record_history))
-        .route("/api/subscribe", axum::routing::post(routes::subscribe))
+        .route(
+            "/api/history",
+            axum::routing::get(routes::history)
+                .post(routes::record_history)
+                .delete(routes::clear_history),
+        )
         .route(
             "/api/subscribe",
-            axum::routing::delete(routes::unsubscribe),
+            axum::routing::post(routes::subscribe)
+                .delete(routes::unsubscribe),
         )
         .route(
             "/api/videos/{id}/like",
@@ -79,6 +90,14 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/subscriptions",
             axum::routing::get(routes::list_subscriptions),
+        )
+        .route(
+            "/api/comments/{id}",
+            axum::routing::delete(routes::delete_comment),
+        )
+        .route(
+            "/api/comments/{id}/like",
+            axum::routing::post(routes::toggle_comment_like),
         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

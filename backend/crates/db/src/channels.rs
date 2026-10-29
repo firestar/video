@@ -48,7 +48,7 @@ pub async fn find_by_id(pool: &Pool, id: Uuid) -> Result<Option<ChannelRow>, sql
         .bind(id)
         .fetch_optional(pool)
         .await?;
-    Ok(row.map(row_to_channel).transpose()?)
+    row.map(row_to_channel).transpose()
 }
 
 pub async fn find_by_user(pool: &Pool, user_id: Uuid) -> Result<Option<ChannelRow>, sqlx::Error> {
@@ -56,7 +56,7 @@ pub async fn find_by_user(pool: &Pool, user_id: Uuid) -> Result<Option<ChannelRo
         .bind(user_id)
         .fetch_optional(pool)
         .await?;
-    Ok(row.map(row_to_channel).transpose()?)
+    row.map(row_to_channel).transpose()
 }
 
 pub async fn update(
@@ -82,7 +82,7 @@ pub async fn update(
     .bind(banner_url)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_to_channel).transpose()?)
+    row.map(row_to_channel).transpose()
 }
 
 /// Batch-load channels by id (for attaching to video lists).
@@ -91,8 +91,21 @@ pub async fn find_by_ids(
     ids: &[Uuid],
 ) -> Result<Vec<ChannelRow>, sqlx::Error> {
     let rows = sqlx::query("SELECT * FROM channels WHERE id = ANY($1)")
-        .bind(&ids)
+        .bind(ids)
         .fetch_all(pool)
         .await?;
-    Ok(rows.into_iter().map(row_to_channel).collect::<Result<Vec<_>, _>>()?)
+    rows.into_iter().map(row_to_channel).collect::<Result<Vec<_>, _>>()
+}
+
+/// Search channels by name (ILIKE substring, case-insensitive).
+pub async fn search(pool: &Pool, query: &str, limit: i64) -> Result<Vec<ChannelRow>, sqlx::Error> {
+    let pattern = format!("%{query}%");
+    let rows = sqlx::query(
+        "SELECT * FROM channels WHERE name ILIKE $1 ORDER BY name LIMIT $2",
+    )
+    .bind(&pattern)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(row_to_channel).collect::<Result<Vec<_>, _>>()
 }

@@ -190,7 +190,12 @@ mod tests {
 
     fn make_storage(base_url: &str) -> Storage {
         Storage {
-            client: aws_sdk_s3::Client::new(),
+            client: Client::from_conf(
+                (&SdkConfig::builder()
+                    .behavior_version(BehaviorVersion::latest())
+                    .build())
+                    .into(),
+            ),
             bucket: "b".into(),
             base_url: base_url.trim_end_matches('/').to_string(),
         }

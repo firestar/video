@@ -9,9 +9,18 @@ pub struct Comment {
     pub id: Uuid,
     pub video_id: Uuid,
     pub user_id: Uuid,
+    pub parent_id: Option<Uuid>,
     pub body: String,
     pub like_count: i64,
     pub created_at: DateTime<Utc>,
+}
+
+/// Threaded comment node: a comment with its replies.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentNode {
+    pub comment: Comment,
+    pub replies: Vec<Comment>,
 }
 
 /// Request body for POST /api/videos/{id}/comments.
@@ -19,6 +28,7 @@ pub struct Comment {
 #[serde(rename_all = "camelCase")]
 pub struct CommentCreate {
     pub body: String,
+    pub parent_id: Option<Uuid>,
 }
 
 impl CommentCreate {
@@ -40,10 +50,11 @@ mod tests {
 
     #[test]
     fn comment_create_validates() {
-        assert!(CommentCreate { body: "hi".into() }.validate().is_ok());
-        assert!(CommentCreate { body: "".into() }.validate().is_err());
+        assert!(CommentCreate { body: "hi".into(), parent_id: None }.validate().is_ok());
+        assert!(CommentCreate { body: "".into(), parent_id: None }.validate().is_err());
         assert!(CommentCreate {
-            body: "x".repeat(10_001)
+            body: "x".repeat(10_001),
+            parent_id: None
         }
         .validate()
         .is_err());

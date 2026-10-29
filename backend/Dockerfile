@@ -3,7 +3,7 @@
 FROM rust:1-bookworm AS builder
 WORKDIR /app
 
-# Build context = project root (docker-compose sets it to `..`).
+# Build context = project root (docker-compose sets `context: .`).
 # Copy workspace manifest + lockfile, then the crate sources.
 COPY Cargo.toml Cargo.lock ./
 COPY backend ./backend

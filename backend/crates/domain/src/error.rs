@@ -30,6 +30,19 @@ pub enum ApiError {
     Internal(String),
 }
 
+/// Errors that can occur when creating a comment.
+#[derive(Debug, Error)]
+pub enum CommentError {
+    #[error("parent comment not found")]
+    ParentNotFound,
+    #[error("can only reply to top-level comments")]
+    NotTopLevel,
+    #[error("reply must be on the same video")]
+    WrongVideo,
+    #[error("database error: {0}")]
+    Db(String),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -73,19 +73,16 @@ pub async fn optional_auth_middleware(
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(|s| s.to_string());
 
-    match token {
-        Some(t) => {
-            let claims = auth::decode_token(&state.config.jwt_secret, &t)
-                .map_err(|e| {
-                    (
-                        axum::http::StatusCode::UNAUTHORIZED,
-                        Json(serde_json::json!({"error": {"message": e.to_string()}})),
-                    )
-                        .into_response()
-                })?;
-            req.extensions_mut().insert(claims);
-        }
-        None => {} // anonymous
+    if let Some(t) = token {
+        let claims = auth::decode_token(&state.config.jwt_secret, &t)
+            .map_err(|e| {
+                (
+                    axum::http::StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({"error": {"message": e.to_string()}})),
+                )
+                    .into_response()
+            })?;
+        req.extensions_mut().insert(claims);
     }
 
     Ok(next.run(req).await)

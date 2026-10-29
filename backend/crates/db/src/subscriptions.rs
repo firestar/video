@@ -116,10 +116,10 @@ pub async fn channels_for_user(
     .bind(subscriber_id)
     .fetch_all(pool)
     .await?;
-    Ok(rows
+    rows
         .into_iter()
         .map(crate::channels::row_to_channel)
-        .collect::<Result<Vec<_>, _>>()?)
+        .collect::<Result<Vec<_>, _>>()
 }
 
 

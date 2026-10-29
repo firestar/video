@@ -1,5 +1,4 @@
-//! HTTP route handlers.
-
+use serde_json::json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
@@ -23,6 +22,18 @@ pub struct ChannelUpdateBody {
     pub banner_url: Option<String>,
 }
 
+/// Query params for GET /api/home/feed.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HomeFeedQuery {
+    pub limit: Option<i64>,
+}
+
+/// Query params for GET /api/videos/{id}/related.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct RelatedQuery {
+    pub limit: Option<i64>,
+}
 
 
 /// POST /api/videos with inline auth check (used because the route is
@@ -199,15 +210,26 @@ pub async fn list_videos(
     let rows = videos::list_public(&state.db, limit, offset, sort).await?;
 
     // Batch-load channels for the page.
+    let items = videos_with_channels(&state.db, &rows).await?;
+
+    Ok(Json(serde_json::Value::Array(items)))
+}
+
+/// Serialize video rows, batch-joining each video's channel and the streamUrl slot.
+async fn videos_with_channels(
+    db: &db::Pool,
+    rows: &[db::videos::VideoRow],
+) -> Result<Vec<serde_json::Value>, ApiError> {
     let channel_ids: Vec<Uuid> = rows.iter().map(|r| r.channel_id).collect();
-    let channel_rows = channels::find_by_ids(&state.db, &channel_ids).await?;
+    let channel_rows = channels::find_by_ids(db, &channel_ids).await?;
     let channel_map: std::collections::HashMap<Uuid, domain::Channel> = channel_rows
         .into_iter()
-        .map(|row| domain::Channel::from(row))
+        .map(domain::Channel::from)
         .map(|c| (c.id, c))
         .collect();
-    let items: Vec<serde_json::Value> = rows
-        .into_iter()
+    Ok(rows
+        .iter()
+        .cloned()
         .map(|row| {
             let video: Video = row.into();
             let mut v = serde_json::to_value(&video).unwrap();
@@ -223,11 +245,8 @@ pub async fn list_videos(
             }
             v
         })
-        .collect();
-
-    Ok(Json(serde_json::Value::Array(items)))
+        .collect())
 }
-
 /// GET /api/videos/{id} — fetch video + channel; signed stream URL when live.
 pub async fn get_video(
     State(state): State<AppState>,
@@ -259,6 +278,25 @@ pub async fn get_video(
         "channel": channel,
         "streamUrl": stream_url,
     })))
+}
+
+/// GET /api/videos/{id}/related — same channel or shared tags, live only,
+/// ordered by views. 404 if the video itself doesn't exist.
+pub async fn get_related_videos(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Query(q): Query<RelatedQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // Confirm the video exists (404 otherwise).
+    let _ = videos::find_by_id(&state.db, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+
+    let limit = q.limit.unwrap_or(10).clamp(1, 50);
+    let rows = videos::find_related(&state.db, id, limit).await?;
+    let items = videos_with_channels(&state.db, &rows).await?;
+
+    Ok(Json(serde_json::Value::Array(items)))
 }
 
 /// GET /api/comments/{videoId} — threaded list (top-level + replies),
@@ -314,7 +352,7 @@ pub async fn list_comments_threaded(
         .map(|n| {
             let mut top = enrich(&n.comment);
             let replies: Vec<serde_json::Value> =
-                n.replies.iter().map(|r| enrich(r)).collect();
+                n.replies.iter().map(enrich).collect();
             if let Some(obj) = top.as_object_mut() {
                 obj.insert("replies".into(), serde_json::json!(replies));
             }
@@ -347,6 +385,7 @@ pub async fn create_comment(
         domain::CommentError::ParentNotFound => ApiError::NotFound,
         domain::CommentError::WrongVideo => ApiError::BadRequest("reply must be on the same video".into()),
         domain::CommentError::NotTopLevel => ApiError::BadRequest("can only reply to top-level comments".into()),
+        domain::CommentError::Db(e) => ApiError::Internal(anyhow::anyhow!("comment insert: {e}")),
     })?;
     Ok((StatusCode::CREATED, Json(row.into())))
 }
@@ -401,22 +440,41 @@ pub async fn toggle_comment_like(
     Ok(Json(serde_json::json!({ "liked": liked })))
 }
 
-/// GET /api/search?q=...
+/// GET /api/search?q=...&limit=20
+/// Full-text video search (title/description) + channel name match.
 pub async fn search(
     State(state): State<AppState>,
     Query(q): Query<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let q = q
+    let term = q
         .get("q")
         .and_then(|v| v.as_str())
         .unwrap_or("")
+        .trim()
         .to_string();
-    if q.trim().is_empty() {
-        return Ok(Json(serde_json::json!([])));
+    if term.is_empty() {
+        return Ok(Json(json!({ "videos": [], "channels": [] })));
     }
-    let rows = videos::search(&state.db, &q, 20).await?;
-    let videos: Vec<domain::Video> = rows.into_iter().map(Into::into).collect();
-    Ok(Json(serde_json::to_value(videos).unwrap()))
+    let limit = q
+        .get("limit")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(20)
+        .clamp(1, 100);
+
+    let (video_rows, channel_rows) = tokio::join!(
+        videos::search(&state.db, &term, limit),
+        channels::search(&state.db, &term, limit),
+    );
+    let video_rows = video_rows?;
+    let channel_rows = channel_rows?;
+
+    let vids = videos_with_channels(&state.db, &video_rows).await?;
+    let chans: Vec<domain::Channel> = channel_rows.into_iter().map(Into::into).collect();
+
+    Ok(Json(json!({
+        "videos": vids,
+        "channels": chans,
+    })))
 }
 
 // ---------- Upload routes ----------
@@ -498,6 +556,100 @@ pub async fn history(
     Ok(Json(serde_json::to_value(items).unwrap()))
 }
 
+/// GET /api/home/feed — personalized feed for an authenticated user, or
+/// trending (top views last 7d) for anonymous users / users with no history.
+///
+/// Response: `{ videos: [...], reasons: {videoId: "trending"|"subscription"|"related"} }`.
+pub async fn home_feed(
+    State(state): State<AppState>,
+    claims: Option<Extension<JwtClaims>>,
+    Query(q): Query<HomeFeedQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let limit = q.limit.unwrap_or(24).clamp(1, 100) as usize;
+    let pool = &state.db;
+
+    let maybe_user = claims.map(|c| c.sub);
+    let history_rows = match maybe_user {
+        Some(uid) => history::list_for_user(pool, uid, 50).await?,
+        None => Vec::new(),
+    };
+
+    let pool_rows = videos::trending_recent(pool, 100).await?;
+
+    // If no history, just return trending rows.
+    if history_rows.is_empty() {
+        let selected = pool_rows.iter().take(limit).cloned().collect::<Vec<_>>();
+        let videos_json = videos_with_channels(pool, &selected).await?;
+        let mut reasons = serde_json::Map::new();
+        for v in &videos_json {
+            let vid = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            reasons.insert(vid, serde_json::Value::String("trending".into()));
+        }
+        return Ok(Json(serde_json::json!({ "videos": videos_json, "reasons": reasons })));
+    }
+
+    // Personalized path.
+    let uid = maybe_user.expect("history non-empty implies authed");
+    let watched_ids: Vec<Uuid> = history_rows.iter().map(|h| h.video_id).collect();
+    let watched = videos::find_by_id_all(pool, &watched_ids).await?;
+    let mut tag_freq: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for w in &watched {
+        for t in &w.tags {
+            *tag_freq.entry(t.clone()).or_insert(0) += 1;
+        }
+    }
+    let sub_channels = subscriptions::list_channels_for_user(pool, uid).await?;
+    let sub_set: std::collections::HashSet<Uuid> = sub_channels.into_iter().collect();
+
+    let now = chrono::Utc::now();
+    let mut scored: Vec<(i64, db::videos::VideoRow, String)> = Vec::new();
+    for row in pool_rows.clone() {
+        let overlap: i64 = row.tags.iter().map(|t| tag_freq.get(t).copied().unwrap_or(0)).sum();
+        let sub_boost = if sub_set.contains(&row.channel_id) { 500 } else { 0 };
+        let recency = row
+            .published_at
+            .map(|p| {
+                let hours = (now.signed_duration_since(p)).num_hours();
+                ((48 - hours.max(0)) * 5).max(0)
+            })
+            .unwrap_or(0);
+        let score = overlap * 100 + sub_boost + recency;
+        let reason = if sub_boost > 0 {
+            "subscription".to_string()
+        } else if overlap > 0 {
+            "related".to_string()
+        } else {
+            "trending".to_string()
+        };
+        scored.push((score, row, reason));
+    }
+    scored.sort_by_key(|b| std::cmp::Reverse(b.0));
+
+    let selected: Vec<db::videos::VideoRow> = scored.iter().take(limit).map(|(_, r, _)| r.clone()).collect();
+    let videos_json = videos_with_channels(pool, &selected).await?;
+
+    let mut reasons = serde_json::Map::new();
+    for v in &videos_json {
+        let vid = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let reason = scored
+            .iter()
+            .find(|(_, r, _)| r.id.to_string() == vid)
+            .map(|(_, _, r)| r.clone())
+            .unwrap_or_else(|| "trending".to_string());
+        reasons.insert(vid, serde_json::Value::String(reason));
+    }
+
+    Ok(Json(serde_json::json!({ "videos": videos_json, "reasons": reasons })))
+}
+
+/// DELETE /api/history — clear all watch history for the user.
+pub async fn clear_history(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+) -> Result<StatusCode, ApiError> {
+    history::clear_for_user(&state.db, claims.sub).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
 /// POST /api/history — record a watch position.
 pub async fn record_history(
     State(state): State<AppState>,
