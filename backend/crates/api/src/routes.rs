@@ -62,8 +62,13 @@ pub async fn create_video_with_auth(
     let title = req_json["title"].as_str().map(|s| s.to_string())
         .ok_or_else(|| ApiError::BadRequest("title required".into()))?;
     let description = req_json["description"].as_str().map(|s| s.to_string());
-    let object_key = req_json["objectKey"]
-        .as_str()
+    // Accept both casings: presign returns `object_key`, and the upload page
+    // + E2E seed echo it back as-is.
+    let object_key = req_json
+        .get("objectKey")
+        .or_else(|| req_json.get("object_key"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .ok_or_else(|| ApiError::BadRequest("objectKey required".into()))?;
     let tags: Vec<String> = req_json["tags"]
