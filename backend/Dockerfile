@@ -16,5 +16,5 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ffmpeg curl && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/api /usr/local/bin/api
 COPY --from=builder /app/target/release/worker /usr/local/bin/worker
-EXPOSE 8080
 EXPOSE 3000
+CMD ["api"]
