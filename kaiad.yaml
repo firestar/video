@@ -59,10 +59,14 @@ services:
       path: backend/Dockerfile
       context: .
     runtime:
+      # Kaiad does not apply `command` (container ran `api`); YT_ROLE selects the binary via the Dockerfile CMD.
       command: ["worker"]
       env:
+        YT_ROLE: worker
         YT_S3_REGION: garage
         YT_LOG_LEVEL: info
+        # Public base for thumbnail URLs (path-style: <endpoint>/<bucket>/<key>).
+        YT_S3_BASE_URL: https://video.synload.com/media
       secretEnv:
         - { name: YT_DATABASE_URL,  secret: video, key: database_url }
         - { name: YT_REDIS_URL,     secret: video, key: redis_url }

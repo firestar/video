@@ -17,4 +17,6 @@ RUN apt-get update && apt-get install -y ffmpeg curl && rm -rf /var/lib/apt/list
 COPY --from=builder /app/target/release/api /usr/local/bin/api
 COPY --from=builder /app/target/release/worker /usr/local/bin/worker
 EXPOSE 3000
-CMD ["api"]
+# Kaiad ignores pipeline `runtime.command`, so the binary is chosen by env:
+# YT_ROLE=worker runs the transcode worker; default is the API server.
+CMD ["sh", "-c", "exec \"${YT_ROLE:-api}\""]
