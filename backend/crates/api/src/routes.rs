@@ -215,7 +215,7 @@ pub async fn list_videos(
     let rows = videos::list_public(&state.db, limit, offset, sort).await?;
 
     // Batch-load channels for the page.
-    let items = videos_with_channels(&state.db, &rows).await?;
+    let items = videos_with_channels(&state.db, &state.storage, &rows).await?;
 
     Ok(Json(serde_json::Value::Array(items)))
 }
@@ -223,6 +223,7 @@ pub async fn list_videos(
 /// Serialize video rows, batch-joining each video's channel and the streamUrl slot.
 async fn videos_with_channels(
     db: &db::Pool,
+    storage: &storage::Storage,
     rows: &[db::videos::VideoRow],
 ) -> Result<Vec<serde_json::Value>, ApiError> {
     let channel_ids: Vec<Uuid> = rows.iter().map(|r| r.channel_id).collect();
@@ -232,25 +233,29 @@ async fn videos_with_channels(
         .map(domain::Channel::from)
         .map(|c| (c.id, c))
         .collect();
-    Ok(rows
-        .iter()
-        .cloned()
-        .map(|row| {
-            let video: Video = row.into();
-            let mut v = serde_json::to_value(&video).unwrap();
-            if let Some(map) = v.as_object_mut() {
-                let channel = channel_map.get(&video.channel_id);
-                map.insert(
-                    "channel".into(),
-                    channel
-                        .map(|c| serde_json::to_value(c).unwrap())
-                        .unwrap_or(serde_json::Value::Null),
-                );
-                map.insert("streamUrl".into(), serde_json::Value::Null);
-            }
-            v
-        })
-        .collect())
+    let mut items = Vec::with_capacity(rows.len());
+    for row in rows.iter().cloned() {
+        let video: Video = row.into();
+        let mut v = serde_json::to_value(&video).unwrap();
+        if let Some(map) = v.as_object_mut() {
+            let channel = channel_map.get(&video.channel_id);
+            map.insert(
+                "channel".into(),
+                channel
+                    .map(|c| serde_json::to_value(c).unwrap())
+                    .unwrap_or(serde_json::Value::Null),
+            );
+            map.insert("streamUrl".into(), serde_json::Value::Null);
+            let thumbnail_key = format!("thumbnails/{}.jpg", video.id);
+            let thumbnail_url = storage.signed_get(&thumbnail_key, std::time::Duration::from_secs(15 * 60)).await;
+            map.insert(
+                "thumbnailUrl".into(),
+                serde_json::Value::String(thumbnail_url.unwrap_or_default()),
+            );
+        }
+        items.push(v);
+    }
+    Ok(items)
 }
 /// GET /api/videos/{id} — fetch video + channel; signed stream URL when live.
 pub async fn get_video(
@@ -299,7 +304,7 @@ pub async fn get_related_videos(
 
     let limit = q.limit.unwrap_or(10).clamp(1, 50);
     let rows = videos::find_related(&state.db, id, limit).await?;
-    let items = videos_with_channels(&state.db, &rows).await?;
+    let items = videos_with_channels(&state.db, &state.storage, &rows).await?;
 
     Ok(Json(serde_json::Value::Array(items)))
 }
@@ -473,7 +478,7 @@ pub async fn search(
     let video_rows = video_rows?;
     let channel_rows = channel_rows?;
 
-    let vids = videos_with_channels(&state.db, &video_rows).await?;
+    let vids = videos_with_channels(&state.db, &state.storage, &video_rows).await?;
     let chans: Vec<domain::Channel> = channel_rows.into_iter().map(Into::into).collect();
 
     Ok(Json(json!({
@@ -584,7 +589,7 @@ pub async fn home_feed(
     // If no history, just return trending rows.
     if history_rows.is_empty() {
         let selected = pool_rows.iter().take(limit).cloned().collect::<Vec<_>>();
-        let videos_json = videos_with_channels(pool, &selected).await?;
+        let videos_json = videos_with_channels(pool, &state.storage, &selected).await?;
         let mut reasons = serde_json::Map::new();
         for v in &videos_json {
             let vid = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
@@ -631,7 +636,7 @@ pub async fn home_feed(
     scored.sort_by_key(|b| std::cmp::Reverse(b.0));
 
     let selected: Vec<db::videos::VideoRow> = scored.iter().take(limit).map(|(_, r, _)| r.clone()).collect();
-    let videos_json = videos_with_channels(pool, &selected).await?;
+    let videos_json = videos_with_channels(pool, &state.storage, &selected).await?;
 
     let mut reasons = serde_json::Map::new();
     for v in &videos_json {
