@@ -14,6 +14,7 @@
 - **Studio feature**: edit/delete own videos (`PATCH`/`DELETE /api/videos/{id}`), list all channel videos (`GET /api/videos?channelId=...`), `/api/me` returns `channelId`; frontend `/studio` page for channel management
 - **Home feed**: home page now uses `/api/home/feed` with reason badges (trending/subscription/related)
 - **Watch history**: history page shows video title, thumbnail, channel, view count; supports clear-all
+- **Studio page build fix**: resolved 4 syntax errors in `/studio` (missing `)` in `deleteVideo`, missing `}` in 3 `onChange` handlers, missing `}` in the `publishedAt` span) — frontend now builds clean (verified with `tsc` + `next build`)
 
 ## Next
 - [ ] Verify live deployment after push (Kaiad builds on each commit)

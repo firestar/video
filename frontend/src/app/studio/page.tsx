@@ -88,14 +88,13 @@ function StudioContent() {
           .map((t) => t.trim())
           .filter(Boolean),
       };
-      const updated = await apiFetch<Video>(`/api/videos/${v.id}`, {
+      const updated: Video = await apiFetch(`/api/videos/${v.id}`, {
         method: "PATCH",
         body: JSON.stringify(body),
       });
-      setVideos((prev) => prev.map((x) => {
-        if (x.id === v.id) return { ...x, ...updated };
-        return x;
-      });
+      setVideos((prev) =>
+        prev.map((x) => (x.id === v.id ? { ...x, ...updated } : x))
+      );
       setEditing(null);
       setSavedMsg("Video updated");
     } catch (e) {
@@ -110,7 +109,7 @@ function StudioContent() {
     setError(null);
     try {
       await apiFetch(`/api/videos/${v.id}`, { method: "DELETE" });
-      setVideos((prev) => prev.filter((x) => x.id !== v.id);
+      setVideos((prev) => prev.filter((x) => x.id !== v.id));
       if (editing === v.id) {
         setEditing(null);
       }
@@ -222,7 +221,7 @@ function StudioContent() {
                         <input
                           type="text"
                           value={draft.title}
-                          onChange={(e) => setDraft({ ...draft, title: e.target.value })
+                          onChange={(e) => setDraft({ ...draft, title: e.target.value })}
                           className="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-ring focus:ring-3 focus:ring-ring/30"
                         />
                       </div>
@@ -230,7 +229,7 @@ function StudioContent() {
                         <label className="text-xs font-medium text-muted-foreground">Description</label>
                         <textarea
                           value={draft.description}
-                          onChange={(e) => setDraft({ ...draft, description: e.target.value })
+                          onChange={(e) => setDraft({ ...draft, description: e.target.value })}
                           rows={2}
                           className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-3 focus:ring-ring/30"
                         />
@@ -240,7 +239,7 @@ function StudioContent() {
                         <input
                           type="text"
                           value={draft.tags}
-                          onChange={(e) => setDraft({ ...draft, tags: e.target.value })
+                          onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
                           placeholder="e2e, sample, demo"
                           className="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-ring focus:ring-3 focus:ring-ring/30"
                         />
@@ -263,7 +262,7 @@ function StudioContent() {
                           <span>{formatDuration(v.durationSecs)}</span>
                           <span>{v.viewCount.toLocaleString()} views</span>
                           <span>{v.likeCount.toLocaleString()} likes</span>
-                          {v.publishedAt && <span>{formatDate(v.publishedAt)}</span>
+                           {v.publishedAt && <span>{formatDate(v.publishedAt)}</span>}
                         </div>
                         {v.tags && v.tags.length > 0 && (
                           <div className="mt-1 flex flex-wrap gap-1">
