@@ -6,7 +6,10 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { formatCount, formatDate } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
+import CommentSection from "@/components/CommentSection";
 import { Bell, BellOff, ThumbsUp, ThumbsDown } from "lucide-react";
+import RelatedVideos from "@/components/RelatedVideos";
+import { WatchPageSkeleton } from "@/components/Skeletons";
 import type { Video } from "@/lib/types";
 
 interface WatchData {
@@ -27,15 +30,30 @@ function WatchContent() {
   const [liked, setLiked] = useState(false);
   const [disliked, setDisliked] = useState(false);
   const [likeCount, setLikeCount] = useState(0);
+  const [viewCount, setViewCount] = useState(0);
   const [subscribed, setSubscribed] = useState(false);
+
   const [subHint, setSubHint] = useState<string | null>(null);
 
-  const [viewCount, setViewCount] = useState(0);
   const viewedRef = useRef(false);
+  const historySentRef = useRef(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  const recordHistory = useCallback(() => {
+    if (historySentRef.current || !videoId || !getToken()) return;
+    historySentRef.current = true;
+    apiFetch("/api/history", {
+      method: "POST",
+      body: JSON.stringify({ videoId, positionSecs: 30 }),
+    }).catch(() => {
+      historySentRef.current = false;
+    });
+  }, [videoId]);
 
   useEffect(() => {
     if (!videoId) return;
     setLoading(true);
+    setError(null);
     apiFetch<WatchData>(`/api/videos/${videoId}`)
       .then((d) => {
         setData(d);
@@ -50,8 +68,17 @@ function WatchContent() {
       .finally(() => setLoading(false));
     return () => {
       viewedRef.current = false;
+      historySentRef.current = false;
     };
   }, [videoId]);
+
+  useEffect(() => {
+    if (!data?.streamUrl) return;
+    const el = videoRef.current;
+    if (!el) return;
+    el.muted = true;
+    el.play().catch(() => {});
+  }, [data?.streamUrl]);
 
   const toggleLike = useCallback(async () => {
     const next = !liked;
@@ -59,7 +86,7 @@ function WatchContent() {
     setLiked(next);
     setDisliked(false);
     setLikeCount(next ? prevCount + 1 : prevCount - 1);
-    if (!getToken()) return; // stub: visual only without login
+    if (!getToken()) return;
     try {
       if (next) {
         await apiFetch(`/api/videos/${videoId}/like`, { method: "POST" });
@@ -77,7 +104,7 @@ function WatchContent() {
     const next = !disliked;
     setDisliked(next);
     setLiked(false);
-    if (!getToken() || !liked) return; // stub: no dislike API; drop the like if present
+    if (!getToken() || !liked) return;
     try {
       await apiFetch(`/api/videos/${videoId}/like`, { method: "DELETE" });
       setLikeCount((c) => Math.max(0, c - 1));
@@ -115,17 +142,36 @@ function WatchContent() {
   }, [user, data]);
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-24 text-white/50">
-        Loading video…
-      </div>
-    );
+    return <WatchPageSkeleton />;
   }
 
   if (error || !data) {
+    const is404 = error?.includes("404");
     return (
-      <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-8 text-sm text-red-300">
-        {error ?? "Video not found"}
+      <div className="flex flex-col items-center gap-4 py-24 text-center">
+        <div className="flex size-16 items-center justify-center rounded-full bg-muted">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 8v4" />
+            <path d="M12 16h.01" />
+          </svg>
+        </div>
+        <div>
+          <h1 className="text-xl font-semibold">
+            {is404 ? "Video not found" : "Something went wrong"}
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {error ?? "This video may have been removed."}
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          onClick={() => {
+            window.location.href = "/";
+          }}
+        >
+          Go home
+        </Button>
       </div>
     );
   }
@@ -133,112 +179,124 @@ function WatchContent() {
   const { video, channel } = data;
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6">
-      {/* Player */}
-      {data.streamUrl ? (
-        <video
-          key={videoId}
-          src={data.streamUrl}
-          controls
-          playsInline
-          className="aspect-video w-full rounded-lg bg-black"
-        />
-      ) : (
-        <div className="flex aspect-video w-full items-center justify-center rounded-lg bg-black/60 text-sm text-white/60">
-          {video.status === "ready"
-            ? "Stream URL unavailable"
-            : `Video is ${video.status} — not ready to play yet`}
-        </div>
-      )}
-
-      {/* Title */}
-      <h1 className="text-xl font-semibold leading-snug text-white">{video.title}</h1>
-
-      {/* Channel row + actions */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <a href={`/channel/${channel?.id ?? ""}`} className="shrink-0">
-            <Avatar size="lg" className="size-10">
-              <AvatarFallback>{(channel?.name ?? "?").charAt(0).toUpperCase()}</AvatarFallback>
-            </Avatar>
-          </a>
-          <div>
-            <div className="text-sm font-medium text-white">
-              {channel?.name ?? "Unknown channel"}
+    <div className="mx-auto w-full max-w-[1750px] flex-1 px-4 py-4 lg:px-8">
+      <div className="flex flex-col gap-6 lg:flex-row lg:gap-8">
+        <div className="min-w-0 flex-1">
+          {data.streamUrl ? (
+            <video
+              key={videoId}
+              src={data.streamUrl}
+              ref={videoRef}
+              autoPlay
+              muted
+              controls
+              playsInline
+              onTimeUpdate={(e) => {
+                if (e.currentTarget.currentTime > 30) recordHistory();
+              }}
+              className="aspect-video w-full rounded-lg bg-black"
+            />
+          ) : (
+            <div className="flex aspect-video w-full items-center justify-center rounded-lg bg-black/60 text-sm text-white/60">
+              {video.status === "ready"
+                ? "Stream URL unavailable"
+                : `Video is ${video.status} — not ready to play yet`}
             </div>
-            <div className="text-xs text-white/60">
-              {channel?.handle ? `@${channel.handle}` : ""}
+          )}
+
+          <h1 className="mt-4 text-xl font-semibold leading-snug">{video.title}</h1>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <a href={`/channel/${channel?.id ?? ""}`} className="shrink-0">
+                <Avatar size="lg" className="size-10">
+                  <AvatarFallback>{(channel?.name ?? "?").charAt(0).toUpperCase()}</AvatarFallback>
+                </Avatar>
+              </a>
+              <div>
+                <div className="text-sm font-medium">
+                  {channel?.name ?? "Unknown channel"}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {channel?.handle ? `@${channel.handle}` : ""}
+                </div>
+              </div>
+              <Button
+                variant={subscribed ? "secondary" : "default"}
+                size="sm"
+                className="ml-3"
+                onClick={toggleSubscribe}
+              >
+                {subscribed ? <BellOff /> : <Bell />}
+                {subscribed ? "Subscribed" : "Subscribe"}
+              </Button>
+              {subHint && <span className="text-xs text-destructive">{subHint}</span>}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="flex items-center rounded-full border border-border">
+                <button
+                  onClick={toggleLike}
+                  aria-pressed={liked}
+                  className={`flex h-9 items-center gap-2 rounded-l-full pl-4 pr-3 text-sm hover:bg-muted ${
+                    liked ? "" : "text-muted-foreground"
+                  }`}
+                >
+                  <ThumbsUp className="size-4" />
+                  <span className="tabular-nums">{formatCount(likeCount)}</span>
+                </button>
+                <span className="h-5 w-px bg-border" />
+                <button
+                  onClick={toggleDislike}
+                  aria-pressed={disliked}
+                  className={`flex h-9 items-center gap-2 rounded-r-full pl-3 pr-4 text-sm hover:bg-muted ${
+                    disliked ? "" : "text-muted-foreground"
+                  }`}
+                >
+                  <ThumbsDown className="size-4" />
+                </button>
+              </div>
+              <div className="ml-2 text-sm text-muted-foreground">
+                {formatCount(viewCount)} views · {formatDate(video.publishedAt ?? video.createdAt)}
+              </div>
             </div>
           </div>
-          <Button
-            variant={subscribed ? "secondary" : "default"}
-            size="sm"
-            className="ml-3"
-            onClick={toggleSubscribe}
-          >
-            {subscribed ? <BellOff /> : <Bell />}
-            {subscribed ? "Subscribed" : "Subscribe"}
-          </Button>
-          {subHint && <span className="text-xs text-red-300">{subHint}</span>}
+
+          {video.description ? (
+            <details className="mt-4 rounded-lg bg-muted p-4">
+              <summary className="cursor-pointer text-sm font-medium">
+                Description
+              </summary>
+              <p className="mt-3 whitespace-pre-wrap text-sm text-foreground/80">
+                {video.description}
+              </p>
+            </details>
+          ) : (
+            <div className="mt-4 rounded-lg bg-muted p-4 text-sm text-muted-foreground">
+              No description.
+            </div>
+          )}
+
+          <div className="mt-6 lg:hidden">
+            <RelatedVideos videoId={video.id} />
+          </div>
+
+          <div className="mt-6">
+            <CommentSection videoId={video.id} />
+          </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="flex items-center rounded-full border border-white/15">
-            <button
-              onClick={toggleLike}
-              aria-pressed={liked}
-              className={`flex h-9 items-center gap-2 rounded-l-full pl-4 pr-3 text-sm hover:bg-white/10 ${
-                liked ? "text-white" : "text-white/80"
-              }`}
-            >
-              <ThumbsUp className="size-4" />
-              <span className="tabular-nums">{formatCount(likeCount)}</span>
-            </button>
-            <span className="h-5 w-px bg-white/15" />
-            <button
-              onClick={toggleDislike}
-              aria-pressed={disliked}
-              className={`flex h-9 items-center gap-2 rounded-r-full pl-3 pr-4 text-sm hover:bg-white/10 ${
-                disliked ? "text-white" : "text-white/80"
-              }`}
-            >
-              <ThumbsDown className="size-4" />
-            </button>
-          </div>
-          <div className="ml-2 text-sm text-white/60">
-            {formatCount(viewCount)} views · {formatDate(video.publishedAt ?? video.createdAt)}
-          </div>
-        </div>
+        <aside className="hidden w-[400px] shrink-0 lg:block xl:w-[440px]">
+          <RelatedVideos videoId={video.id} />
+        </aside>
       </div>
-
-      {/* Description */}
-      {video.description ? (
-        <details className="rounded-lg bg-white/5 p-4">
-          <summary className="cursor-pointer text-sm font-medium text-white">
-            {formatCount(viewCount)} views · {formatDate(video.publishedAt ?? video.createdAt)}
-          </summary>
-          <p className="mt-3 whitespace-pre-wrap text-sm text-white/80">
-            {video.description}
-          </p>
-        </details>
-      ) : (
-        <div className="rounded-lg bg-white/5 p-4 text-sm text-white/40">
-          No description.
-        </div>
-      )}
     </div>
   );
 }
 
 export default function WatchPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="flex items-center justify-center py-24 text-white/50">
-          Loading video…
-        </div>
-      }
-    >
+    <Suspense fallback={<WatchPageSkeleton />}>
       <WatchContent />
     </Suspense>
   );
