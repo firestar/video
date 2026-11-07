@@ -228,6 +228,29 @@ pub async fn list_for_channel(
     .await
 }
 
+/// All videos for one channel (every status) — used by the owner's
+/// channel-management (studio) view. Newest first.
+pub async fn list_for_channel_all(
+    pool: &Pool,
+    channel_id: Uuid,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<VideoRow>, sqlx::Error> {
+    sqlx::query_as(
+        r#"
+        SELECT * FROM videos
+        WHERE channel_id = $1
+        ORDER BY published_at DESC NULLS LAST, created_at DESC
+        LIMIT $2 OFFSET $3
+        "#
+    )
+    .bind(channel_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+}
+
 /// Full-text search over title/description (ready videos only).
 pub async fn search(pool: &Pool, query: &str, limit: i64) -> Result<Vec<VideoRow>, sqlx::Error> {
     sqlx::query_as(

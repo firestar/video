@@ -34,13 +34,41 @@ export interface Video {
   createdAt: string;
   /** Joined by GET /api/videos (list) — may be null. */
   channel?: Channel;
+  /** Feed reason badge (from /api/home/feed): "trending" | "subscription" | "related". */
+  reason?: string;
 }
 
 export interface Comment {
   id: string;
-  video_id: string;
-  user_id: string;
-  user?: User;
+  videoId: string;
+  userId: string;
+  parentId: string | null;
   body: string;
-  created_at: string;
+  likeCount: number;
+  createdAt: string;
+  /** Author name, batch-joined by GET /api/comments/{videoId}. */
+  authorName?: string;
+  /** Author avatar URL (may be null). */
+  authorAvatar?: string | null;
+  /** Replies, only on top-level comments. */
+  replies?: Comment[];
+}
+
+/** A single watch-history row returned by GET /api/history. */
+export interface HistoryItem {
+  userId: string;
+  videoId: string;
+  watchedUntilSecs: number;
+  updatedAt: string;
+  /** Joined video details from GET /api/history. */
+  title?: string;
+  thumbnailUrl?: string;
+  viewCount?: number;
+  channel?: Channel;
+}
+
+/** GET /api/home/feed response. */
+export interface FeedResponse {
+  videos: Video[];
+  reasons: Record<string, string>;
 }

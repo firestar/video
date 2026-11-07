@@ -99,6 +99,11 @@ pub fn build_router(state: AppState) -> Router {
             "/api/comments/{id}/like",
             axum::routing::post(routes::toggle_comment_like),
         )
+        .route(
+            "/api/videos/{id}",
+            axum::routing::patch(routes::update_video)
+                .delete(routes::delete_video),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::auth_middleware,
@@ -124,6 +129,10 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::get(routes::get_channel)
                 .patch(routes::update_channel_with_auth),
         )
+         .route(
+             "/api/channels/{id}/videos",
+             axum::routing::get(routes::list_channel_videos),
+         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::optional_auth_middleware,

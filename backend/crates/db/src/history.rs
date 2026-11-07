@@ -37,9 +37,8 @@ pub async fn upsert(
         INSERT INTO watch_history (user_id, video_id, watched_until_secs, updated_at)
         VALUES ($1, $2, $3, now())
         ON CONFLICT (user_id, video_id)
-        DO UPDATE SET watched_until_secs = GREATEST(watched_history.watched_until_secs, EXCLUDED.watched_until_secs),
+        DO UPDATE SET watched_until_secs = GREATEST(watch_history.watched_until_secs, EXCLUDED.watched_until_secs),
                       updated_at = now()
-        RETURNING *
         "#,
     )
     .bind(user_id)

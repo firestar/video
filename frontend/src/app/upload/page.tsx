@@ -83,7 +83,6 @@ export default function UploadPage() {
     setError(null);
     setProgress(0);
     try {
-      // 1. Presign
       setPhase("presign");
       const presign = await apiFetch<{ upload_url: string; object_key: string }>(
         "/api/uploads/presign",
@@ -97,7 +96,6 @@ export default function UploadPage() {
         }
       );
 
-      // 2. PUT to presigned URL with progress (XHR, not fetch)
       setPhase("uploading");
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
@@ -116,7 +114,6 @@ export default function UploadPage() {
         xhr.send(file);
       });
 
-      // 3. Create video record
       setPhase("creating");
       const created = await apiFetch<{ video: { id: string } }>("/api/videos", {
         method: "POST",
@@ -131,7 +128,6 @@ export default function UploadPage() {
         }),
       });
 
-      // 4. Redirect
       router.push(`/watch/${created.video.id}`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Upload failed");
@@ -143,7 +139,7 @@ export default function UploadPage() {
 
   if (isLoading || !user) {
     return (
-      <div className="flex items-center justify-center py-24 text-white/50">
+      <div className="flex items-center justify-center py-24 text-muted-foreground">
         Checking session…
       </div>
     );
@@ -153,7 +149,6 @@ export default function UploadPage() {
     <div className="mx-auto max-w-2xl">
       <h1 className="mb-6 text-2xl font-semibold">Upload</h1>
 
-      {/* Drop area */}
       {!file ? (
         <div
           onDragOver={(e) => {
@@ -166,14 +161,12 @@ export default function UploadPage() {
           className={`flex cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed p-16 text-center transition-colors ${
             dragOver
               ? "border-blue-400 bg-blue-500/10"
-              : "border-white/20 bg-white/5 hover:border-white/40"
+              : "border-border bg-muted hover:border-foreground/40"
           }`}
         >
           <div className="text-5xl">📹</div>
-          <p className="text-lg font-medium text-white">
-            Drag & drop your video here
-          </p>
-          <p className="text-sm text-white/50">or click to browse · video files up to 2 GB</p>
+          <p className="text-lg font-medium">Drag & drop your video here</p>
+          <p className="text-sm text-muted-foreground">or click to browse · video files up to 2 GB</p>
           <input
             ref={inputRef}
             type="file"
@@ -183,10 +176,10 @@ export default function UploadPage() {
           />
         </div>
       ) : (
-        <div className="flex items-center justify-between rounded-lg border border-white/15 bg-white/5 p-4">
+        <div className="flex items-center justify-between rounded-lg border border-border bg-muted p-4">
           <div className="min-w-0">
-            <p className="truncate font-medium text-white">{file.name}</p>
-            <p className="text-sm text-white/50">{formatBytes(file.size)}</p>
+            <p className="truncate font-medium">{file.name}</p>
+            <p className="text-sm text-muted-foreground">{formatBytes(file.size)}</p>
           </div>
           <Button
             variant="ghost"
@@ -201,9 +194,8 @@ export default function UploadPage() {
           </Button>
         </div>
       )}
-      {fileError && <p className="mt-2 text-sm text-red-400">{fileError}</p>}
+      {fileError && <p className="mt-2 text-sm text-destructive">{fileError}</p>}
 
-      {/* Fields */}
       <Card className="mt-6">
         <CardHeader>
           <CardTitle>Video details</CardTitle>
@@ -222,7 +214,7 @@ export default function UploadPage() {
             onChange={(e) => setDescription(e.target.value)}
             disabled={busy}
             rows={4}
-            className="w-full rounded-md border border-white/20 bg-transparent px-3 py-2 text-sm text-white placeholder:text-white/40 focus:outline-none"
+            className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none"
           />
           <Input
             placeholder="Tags (comma-separated)"
@@ -231,26 +223,25 @@ export default function UploadPage() {
             disabled={busy}
           />
 
-          {/* Progress */}
           {phase === "uploading" && (
             <div>
-              <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
+              <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
                 <div
                   className="h-full bg-blue-500 transition-all"
                   style={{ width: `${progress}%` }}
                 />
               </div>
-              <p className="mt-1 text-sm text-white/50">{progress}%</p>
+              <p className="mt-1 text-sm text-muted-foreground">{progress}%</p>
             </div>
           )}
           {phase === "presign" && (
-            <p className="text-sm text-white/50">Preparing upload…</p>
+            <p className="text-sm text-muted-foreground">Preparing upload…</p>
           )}
           {phase === "creating" && (
-            <p className="text-sm text-white/50">Upload complete. Finalizing…</p>
+            <p className="text-sm text-muted-foreground">Upload complete. Finalizing…</p>
           )}
 
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <p className="text-sm text-destructive">{error}</p>}
 
           <Button
             onClick={upload}

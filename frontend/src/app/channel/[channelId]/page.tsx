@@ -5,6 +5,7 @@ import { apiFetch } from "@/lib/api";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import SubscribeButton from "@/components/SubscribeButton";
 import VideoGrid from "@/components/VideoGrid";
+import { ChannelPageSkeleton } from "@/components/Skeletons";
 import type { Channel, Video } from "@/lib/types";
 
 interface ChannelData {
@@ -39,17 +40,23 @@ function ChannelContent() {
   }, [channelId]);
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-24 text-white/50">
-        Loading channel…
-      </div>
-    );
+    return <ChannelPageSkeleton />;
   }
 
   if (error || !data) {
     return (
-      <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-8 text-sm text-red-300">
-        {error ?? "Channel not found"}
+      <div className="flex flex-col items-center gap-4 py-24 text-center">
+        <div className="flex size-16 items-center justify-center rounded-full bg-muted">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 8v4" />
+            <path d="M12 16h.01" />
+          </svg>
+        </div>
+        <div>
+          <h1 className="text-xl font-semibold">Channel not found</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{error}</p>
+        </div>
       </div>
     );
   }
@@ -58,41 +65,38 @@ function ChannelContent() {
 
   return (
     <div>
-      {/* Banner */}
-      <div className="h-[200px] w-full overflow-hidden bg-neutral-800">
+      <div className="h-[160px] w-full overflow-hidden bg-muted sm:h-[200px]">
         {channel.banner_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={channel.banner_url}
             alt="Channel banner"
             className="h-full w-full object-cover"
           />
         ) : (
-          <div className="h-full w-full bg-gradient-to-r from-neutral-800 via-neutral-700 to-neutral-800" />
+          <div className="h-full w-full bg-gradient-to-r from-muted via-muted/50 to-muted" />
         )}
       </div>
 
-      {/* Channel header */}
       <div className="mx-auto max-w-6xl px-4">
-        <div className="-mt-14 flex flex-col gap-6 sm:flex-row sm:items-end">
-          <div className="shrink-0 rounded-full ring-4 ring-[#0f0f0f]">
-            <Avatar size="lg" className="size-32">
+        <div className="flex flex-col gap-4 pt-4 sm:-mt-14 sm:flex-row sm:items-end sm:gap-6">
+          <div className="shrink-0 rounded-full ring-4 ring-background sm:mt-0 mt-0">
+            <Avatar size="lg" className="size-24 sm:size-32">
               {channel.avatar_url ? (
                 <AvatarImage src={channel.avatar_url} alt={channel.name} />
               ) : (
-                <AvatarFallback className="text-4xl">
+                <AvatarFallback className="text-3xl sm:text-4xl">
                   {channel.name.charAt(0).toUpperCase()}
                 </AvatarFallback>
               )}
             </Avatar>
           </div>
           <div className="flex-1 pb-1">
-            <h1 className="text-2xl font-bold text-white sm:text-3xl">
-              {channel.name}
-            </h1>
+            <h1 className="text-xl font-bold sm:text-3xl">{channel.name}</h1>
             {channel.handle && (
-              <div className="text-sm text-white/60">@{channel.handle}</div>
+              <div className="text-sm text-muted-foreground">@{channel.handle}</div>
             )}
-            <div className="mt-1 flex flex-wrap items-center gap-3 text-sm text-white/60">
+            <div className="mt-1 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
               <span>{count.toLocaleString()} subscribers</span>
             </div>
           </div>
@@ -107,14 +111,13 @@ function ChannelContent() {
         </div>
 
         {channel.description && (
-          <p className="mt-4 max-w-3xl text-sm text-white/70">
+          <p className="mt-4 max-w-3xl text-sm text-foreground/70">
             {channel.description}
           </p>
         )}
 
-        {/* Videos */}
         <div className="mt-10">
-          <h2 className="mb-6 text-lg font-semibold text-white">Videos</h2>
+          <h2 className="mb-6 text-lg font-semibold">Videos</h2>
           <VideoGrid videos={videos} />
         </div>
       </div>
@@ -124,13 +127,7 @@ function ChannelContent() {
 
 export default function ChannelPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="flex items-center justify-center py-24 text-white/50">
-          Loading channel…
-        </div>
-      }
-    >
+    <Suspense fallback={<ChannelPageSkeleton />}>
       <ChannelContent />
     </Suspense>
   );

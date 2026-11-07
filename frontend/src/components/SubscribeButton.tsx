@@ -20,11 +20,10 @@ export default function SubscribeButton({
 
   const toggle = async () => {
     const next = !subscribed;
-    // Optimistic update
     setSubscribed(next);
     setCount((c) => (next ? c + 1 : Math.max(0, c - 1)));
 
-    if (!getToken()) return; // stub: visual only without login
+    if (!getToken()) return;
     setPending(true);
     try {
       const res = (await apiFetch<{ subscriberCount: number }>(
@@ -35,7 +34,6 @@ export default function SubscribeButton({
         setCount(res.subscriberCount);
       }
     } catch {
-      // Revert on failure
       setSubscribed(!next);
       setCount((c) => (next ? c - 1 : c + 1));
     } finally {
@@ -53,8 +51,8 @@ export default function SubscribeButton({
         "h-9 shrink-0 rounded-full px-4 text-sm font-medium transition-colors",
         "disabled:cursor-not-allowed disabled:opacity-60",
         subscribed
-          ? "bg-neutral-600 text-white hover:bg-neutral-700"
-          : "bg-white text-black hover:bg-neutral-200"
+          ? "bg-muted text-foreground hover:bg-muted/80"
+          : "bg-foreground text-background hover:bg-foreground/80"
       )}
     >
       {subscribed ? "Subscribed" : "Subscribe"}

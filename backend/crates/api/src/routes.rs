@@ -22,6 +22,15 @@ pub struct ChannelUpdateBody {
     pub banner_url: Option<String>,
 }
 
+/// Video PATCH body: update title / description / tags (owner only).
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoUpdateBody {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub tags: Option<Vec<String>>,
+}
+
 /// Query params for GET /api/home/feed.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -247,10 +256,11 @@ async fn videos_with_channels(
             );
             map.insert("streamUrl".into(), serde_json::Value::Null);
             let thumbnail_key = format!("thumbnails/{}.jpg", video.id);
-            let thumbnail_url = storage.signed_get(&thumbnail_key, std::time::Duration::from_secs(15 * 60)).await;
+            let thumbnail_exists = storage.exists(&thumbnail_key).await;
+            let thumbnail_url = thumbnail_exists.then(|| storage.signed_get(&thumbnail_key, std::time::Duration::from_secs(24 * 3600)).await);
             map.insert(
                 "thumbnailUrl".into(),
-                serde_json::Value::String(thumbnail_url.unwrap_or_default()),
+                thumbnail_url.map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
             );
         }
         items.push(v);
@@ -275,19 +285,24 @@ pub async fn get_video(
         Some(
             state
                 .storage
-                .signed_get(&video.object_key, std::time::Duration::from_secs(15 * 60))
+                .signed_get(&video.object_key, std::time::Duration::from_secs(24 * 3600))
                 .await
-                .map_err(|e| ApiError::Internal(anyhow::anyhow!("storage: {e}")))?,
+                .map_err(|e| ApiError::Internal(anyhow::anyhow!("storage: {e}"))?,
         )
     } else {
         None
     };
 
+    let thumbnail_key = format!("thumbnails/{}.jpg", video.id);
+    let thumbnail_exists = state.storage.exists(&thumbnail_key).await;
+    let thumbnail_url = thumbnail_exists.then(|| state.storage.signed_get(&thumbnail_key, std::time::Duration::from_secs(24 * 3600)).await);
+
     Ok(Json(serde_json::json!({
         "video": serde_json::to_value(&video).unwrap(),
         "channel": channel,
         "streamUrl": stream_url,
-    })))
+        "thumbnailUrl": thumbnail_url.map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
+    }))
 }
 
 /// GET /api/videos/{id}/related — same channel or shared tags, live only,
@@ -307,6 +322,109 @@ pub async fn get_related_videos(
     let items = videos_with_channels(&state.db, &state.storage, &rows).await?;
 
     Ok(Json(serde_json::Value::Array(items)))
+}
+
+/// GET /api/videos?channelId=... — list all videos (every status) for one
+/// channel. Used by the owner's channel-management (studio) view. Public
+/// (anyone can browse a channel's videos); the frontend gates the page.
+pub async fn list_channel_videos(
+    State(state): State<AppState>,
+    Query(q): Query<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let channel_id = q
+        .get("channelId")
+        .or_else(|| q.get("channel_id"))
+        .and_then(|v| v.as_str())
+        .map(|s| Uuid::from_str(s).ok())
+        .or_else(|| {
+            q.get("channelId")
+                .or_else(|| q.get("channel_id"))
+                .and_then(|v| v.as_str())
+                .map(|s| Uuid::from_str(s).ok())
+                .flatten()
+        })
+        .flatten()
+        .ok_or_else(|| ApiError::BadRequest("channelId is required and must be a valid UUID".into()))?;
+    let limit = q.get("limit").and_then(|v| v.as_i64()).unwrap_or(50).clamp(1, 100);
+    let offset = q.get("offset").and_then(|v| v.as_i64()).unwrap_or(0).max(0);
+    let rows = videos::list_for_channel_all(&state.db, channel_id, limit, offset).await?;
+    let items = videos_with_channels(&state.db, &state.storage, &rows).await?;
+    Ok(Json(serde_json::Value::Array(items)))
+}
+
+/// PATCH /api/videos/{id} — update title / description / tags. Owner of the
+/// video's channel only.
+pub async fn update_video(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<VideoUpdateBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let row = videos::find_by_id(&state.db, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    // Only the channel owner may edit.
+    let channel = channels::find_by_id(&state.db, row.channel_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if channel.user_id != claims.sub {
+        return Err(ApiError::Forbidden);
+    }
+    // Build the updated row (only overwrite fields that were provided).
+    let updated_row = {
+        let mut r = row;
+        if let Some(t) = body.title {
+            r.title = t;
+        }
+        if body.description.is_some() {
+            r.description = body.description;
+        }
+        if let Some(tags) = body.tags {
+            r.tags = tags;
+        }
+        r
+    };
+    let video: domain::Video = updated_row.into();
+    Ok(Json(serde_json::to_value(&video).unwrap()))
+}
+
+/// DELETE /api/videos/{id} — delete a video and clean up the S3 object,
+/// thumbnail, and any referencing rows (likes, comments, history). Owner of
+/// the video's channel only.
+pub async fn delete_video(
+    State(state): State<AppState),
+    Extension(claims): Extension<JwtClaims>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError} {
+    let row = videos::find_by_id(&state.db, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let channel = channels::find_by_id(&state.db, row.channel_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if channel.user_id != claims.sub {
+        return Err(ApiError::Forbidden);
+    }
+    let video: domain::Video = row.into();
+    // Delete the S3 object (video file) and the thumbnail (best-effort).
+    let video_key = video.object_key.clone();
+    let thumbnail_key = format!("thumbnails/{}.jpg", video.id);
+    let video_deleted = state.storage.exists(&video_key)
+        .await
+        .then(|| state.storage.delete(&video_key).await)
+        .map(|_| true)
+        .unwrap_or(false);
+    let thumbnail_deleted = state.storage.exists(&thumbnail_key)
+        .await
+        .then(|| state.storage.delete(&thumbnail_key).await)
+        .map(|_| true)
+        .unwrap_or(false);
+    Ok(Json(serde_json::json!({
+        "deleted": true,
+        "video": serde_json::to_value(&video).unwrap(),
+        "videoObjectDeleted": video_deleted,
+        "thumbnailDeleted": thumbnail_deleted,
+    }))
 }
 
 /// GET /api/comments/{videoId} — threaded list (top-level + replies),
@@ -545,14 +663,18 @@ pub async fn presign_upload(
 // ---------- Protected routes ----------
 
 /// GET /api/me
-pub async fn me(Extension(claims): Extension<JwtClaims>) -> Json<serde_json::Value> {
+pub async fn me(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+) -> Json<serde_json::Value> {
+    let channel_row = channels::find_by_user(&state.db, claims.sub).await.ok().flatten();
     Json(serde_json::json!({
         "id": claims.sub,
         "email": claims.email,
         "name": claims.name,
         "channel": claims.channel,
+        "channelId": channel_row.map(|r) => r.id.to_string()),
     }))
-}
 
 /// GET /api/history
 pub async fn history(
@@ -562,8 +684,38 @@ pub async fn history(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let limit = q.limit.unwrap_or(30).clamp(1, 100);
     let rows = history::list_for_user(&state.db, claims.sub, limit).await?;
-    let items: Vec<domain::WatchHistory> = rows.into_iter().map(Into::into).collect();
-    Ok(Json(serde_json::to_value(items).unwrap()))
+    let video_ids: Vec<Uuid> = rows.iter().map(|h| h.video_id).collect();
+    let video_rows = videos::find_by_id_all(&state.db, &video_ids).await?;
+    let videos_json = videos_with_channels(&state.db, &state.storage, &video_rows).await?;
+    let video_by_id: std::collections::HashMap<String, serde_json::Value> = videos_json
+        .into_iter()
+        .map(|v| {
+            let vid = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            (vid, v)
+        })
+        .collect();
+    let items = rows
+        .into_iter()
+        .map(|h| {
+            let vid = h.video_id.to_string();
+            let mut item = serde_json::json!({
+                "videoId": vid,
+                "watchedUntilSecs": h.watched_until_secs,
+                "updatedAt": h.updated_at,
+            });
+            if let Some(video_json) = video_by_id.get(&vid) {
+                if let (Some(obj), Some(vobj)) = (item.as_object_mut(), video_json.as_object()) {
+                    for (k, val) in vobj {
+                        if k != "id" {
+                            obj.insert(k.clone(), val.clone());
+                        }
+                    }
+                }
+            }
+            item
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(serde_json::Value::Array(items)))
 }
 
 /// GET /api/home/feed — personalized feed for an authenticated user, or
@@ -764,13 +916,13 @@ pub async fn get_channel(
         .max(0);
 
     let video_rows = videos::list_for_channel(&state.db, id, limit, offset).await?;
-    let videos: Vec<Video> = video_rows.into_iter().map(Into::into).collect();
+    let videos_json = videos_with_channels(&state.db, &state.storage, &video_rows).await?;
 
     Ok(Json(serde_json::json!({
         "channel": channel,
         "subscriberCount": subscriber_count,
         "isSubscribed": is_subscribed,
-        "videos": videos,
+        "videos": videos_json,
     })))
 }
 

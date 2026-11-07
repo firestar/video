@@ -3,66 +3,84 @@ import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import VideoGrid from "@/components/VideoGrid";
-import type { Video } from "@/lib/types";
+import { VideoGridSkeleton } from "@/components/Skeletons";
+import ErrorState from "@/components/ErrorState";
+import type { FeedResponse, Video } from "@/lib/types";
 
 const PAGE_SIZE = 20;
 
 export default function HomePage() {
   const [videos, setVideos] = useState<Video[]>([]);
+  const [reasons, setReasons] = useState<Record<string, string>>({});
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchPage = useCallback(async (from: number) => {
-    const res = await apiFetch<Video[]>(
-      `/api/videos?limit=${PAGE_SIZE}&offset=${from}&sort=trending`
-    );
-    return res;
+  const loadInitial = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await apiFetch<FeedResponse>(`/api/home/feed?limit=${PAGE_SIZE}`);
+      setVideos(data.videos);
+      setReasons(data.reasons);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load videos");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
-    fetchPage(0)
-      .then((rows) => setVideos(rows))
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [fetchPage]);
+    loadInitial();
+  }, [loadInitial]);
 
   const loadMore = async () => {
     setLoadingMore(true);
     try {
-      const rows = await fetchPage(offset + PAGE_SIZE);
-      setVideos((prev) => [...prev, ...rows]);
+      const data = await apiFetch<FeedResponse>(`/api/home/feed?limit=${offset + PAGE_SIZE}`);
+      setVideos(data.videos);
+      setReasons(data.reasons);
       setOffset((prev) => prev + PAGE_SIZE);
     } catch (e) {
-      setError((e as Error).message);
+      setError(e instanceof Error ? e.message : "Failed to load more");
     } finally {
       setLoadingMore(false);
     }
   };
 
+  if (loading) {
+    return (
+      <div>
+        <h1 className="mb-6 text-2xl font-semibold">Home Feed</h1>
+        <VideoGridSkeleton count={10} />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div>
+        <h1 className="mb-6 text-2xl font-semibold">Home Feed</h1>
+        <ErrorState
+          title="Can't connect"
+          message={error}
+          onRetry={loadInitial}
+        />
+      </div>
+    );
+  }
+
   return (
     <div>
       <h1 className="mb-6 text-2xl font-semibold">Home Feed</h1>
-      {loading ? (
-        <div className="flex items-center justify-center py-24 text-white/50">
-          Loading videos…
+      <VideoGrid videos={videos} reasons={reasons} />
+      {videos.length > 0 && (
+        <div className="mt-10 flex justify-center">
+          <Button onClick={loadMore} disabled={loadingMore}>
+            {loadingMore ? "Loading…" : "Load more"}
+          </Button>
         </div>
-      ) : error ? (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-6 text-sm text-red-300">
-          Failed to load videos: {error}
-        </div>
-      ) : (
-        <>
-          <VideoGrid videos={videos} />
-          {videos.length > 0 && (
-            <div className="mt-10 flex justify-center">
-              <Button onClick={loadMore} disabled={loadingMore}>
-                {loadingMore ? "Loading…" : "Load more"}
-              </Button>
-            </div>
-          )}
-        </>
       )}
     </div>
   );

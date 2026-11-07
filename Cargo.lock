@@ -121,6 +121,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "argon2",
+ "aws-config",
  "chrono",
  "domain",
  "jsonwebtoken",
@@ -128,6 +129,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
