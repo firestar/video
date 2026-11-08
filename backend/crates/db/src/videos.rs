@@ -223,7 +223,7 @@ pub async fn count_and_views_for_channel(
     channel_id: Uuid,
 ) -> Result<(i64, i64), sqlx::Error> {
     let (n, views) = sqlx::query_as("
-        SELECT COUNT(*), COALESCE(SUM(view_count), 0)
+        SELECT COUNT(*), COALESCE(SUM(view_count), 0)::BIGINT
         FROM videos WHERE channel_id = $1 AND status = 'ready'")
         .bind(channel_id)
         .fetch_one(pool)
