@@ -95,10 +95,23 @@ pub async fn find_by_email(pool: &Pool, email: &str) -> Result<Option<UserRow>, 
 }
 
 /// Look up a user by id.
-/// Look up a user by id.
 pub async fn find_by_id(pool: &Pool, id: Uuid) -> Result<Option<UserRow>, sqlx::Error> {
     let row = sqlx::query("SELECT * FROM users WHERE id = $1")
         .bind(id)
+        .fetch_optional(pool)
+        .await?;
+    row.map(row_to_user).transpose()
+}
+
+/// Set the user's avatar URL (channel avatar).
+pub async fn update_avatar(
+    pool: &Pool,
+    user_id: Uuid,
+    avatar_url: &str,
+) -> Result<Option<UserRow>, sqlx::Error> {
+    let row = sqlx::query("UPDATE users SET avatar_url = $2 WHERE id = $1 RETURNING *")
+        .bind(user_id)
+        .bind(avatar_url)
         .fetch_optional(pool)
         .await?;
     row.map(row_to_user).transpose()

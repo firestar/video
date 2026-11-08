@@ -2,12 +2,14 @@
 import { Suspense, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import SubscribeButton from "@/components/SubscribeButton";
+import ChannelEditor from "@/components/ChannelEditor";
 import VideoGrid from "@/components/VideoGrid";
 import { ChannelPageSkeleton } from "@/components/Skeletons";
 import type { Channel, Video } from "@/lib/types";
-
 interface ChannelData {
   channel: Channel;
   subscriberCount: number;
@@ -18,13 +20,14 @@ interface ChannelData {
 function ChannelContent() {
   const params = useParams<{ channelId: string }>();
   const channelId = params?.channelId ?? "";
+  const { user } = useAuth();
 
   const [data, setData] = useState<ChannelData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [count, setCount] = useState(0);
   const [subscribed, setSubscribed] = useState(false);
-
+  const [editing, setEditing] = useState(false);
   useEffect(() => {
     if (!channelId) return;
     setLoading(true);
@@ -66,10 +69,10 @@ function ChannelContent() {
   return (
     <div>
       <div className="h-[160px] w-full overflow-hidden bg-muted sm:h-[200px]">
-        {channel.banner_url ? (
+        {channel.bannerUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={channel.banner_url}
+            src={channel.bannerUrl}
             alt="Channel banner"
             className="h-full w-full object-cover"
           />
@@ -82,8 +85,8 @@ function ChannelContent() {
         <div className="flex flex-col gap-4 pt-4 sm:-mt-14 sm:flex-row sm:items-end sm:gap-6">
           <div className="shrink-0 rounded-full ring-4 ring-background sm:mt-0 mt-0">
             <Avatar size="lg" className="size-24 sm:size-32">
-              {channel.avatar_url ? (
-                <AvatarImage src={channel.avatar_url} alt={channel.name} />
+              {channel.avatarUrl ? (
+                <AvatarImage src={channel.avatarUrl} alt={channel.name} />
               ) : (
                 <AvatarFallback className="text-3xl sm:text-4xl">
                   {channel.name.charAt(0).toUpperCase()}
@@ -100,7 +103,12 @@ function ChannelContent() {
               <span>{count.toLocaleString()} subscribers</span>
             </div>
           </div>
-          <div className="pb-1">
+          <div className="flex items-center gap-2 pb-1">
+            {user && channel.userId === user.id && (
+              <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+                Edit channel
+              </Button>
+            )}
             <SubscribeButton
               key={channel.id}
               channelId={channel.id}
@@ -109,6 +117,16 @@ function ChannelContent() {
             />
           </div>
         </div>
+
+        {editing && (
+          <ChannelEditor
+            channel={channel}
+            onSaved={(updated) =>
+              setData((d) => (d ? { ...d, channel: updated } : d))
+            }
+            onClose={() => setEditing(false)}
+          />
+        )}
 
         {channel.description && (
           <p className="mt-4 max-w-3xl text-sm text-foreground/70">

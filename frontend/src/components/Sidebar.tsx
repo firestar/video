@@ -74,8 +74,8 @@ export default function Sidebar({ open, onClose }: Props) {
                 className="flex items-center gap-2.5 rounded-md px-3 py-1.5 text-sm text-foreground/70 hover:bg-muted hover:text-foreground"
               >
                 <Avatar size="sm" className="size-6">
-                  {c.avatar_url ? (
-                    <AvatarImage src={c.avatar_url} alt={c.name} />
+                  {c.avatarUrl ? (
+                    <AvatarImage src={c.avatarUrl} alt={c.name} />
                   ) : (
                     <AvatarFallback className="text-xs">
                       {c.name.charAt(0).toUpperCase()}

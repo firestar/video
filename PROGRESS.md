@@ -33,20 +33,41 @@
   - `finalize` now also sets `object_key` to the top-quality variant (fixes latent bug: `streamUrl` was signing the raw source file, not the transcode)
   - `get_video` returns `streams: [{quality, width, height, sizeBytes, url}]` with signed URLs
   - Verified end-to-end locally with `smoke-test-quality.sh` (docker redis+postgres+s3mock, real worker, 720p source → 3 variants)
-- **Video quality selector (frontend)**:
-  - `types.ts`: `StreamVariant` interface, `Video.streams?`
-  - Watch page: quality menu button (shows current quality) → dropdown of available qualities; switching swaps `src` and restores `currentTime`; falls back to single `streamUrl` when no `streams` (old videos)
-
-## In flight
-- [ ] Push quality selector + backend compile fixes → Kaiad rebuild → verify live (new `streams` field on `get_video`, quality menu on watch page)
-- [ ] Re-verify studio backend routes are now live (PATCH/DELETE video, `/api/me`) — they were never actually deployed due to the compile breakage
-- [ ] Add playlist / watch-next queue
+ - **Video quality selector (frontend)**:
+   - `types.ts`: `StreamVariant` interface, `Video.streams?`
+   - Watch page: quality menu button (shows current quality) → dropdown of available qualities; switching swaps `src` and restores `currentTime`; falls back to single `streamUrl` when no `streams` (old videos)
+   - **Shipped live** (commit `b845ccd`, deployed 06:37–06:39 UTC): live E2E verified — upload 720p source → 3 variants (1280×720/854×480/640×360) in ~3s, signed stream URLs, `object_key` = top quality
+   - Root cause of the 06:04 queue failure: stale `sourceKey`/`outputPrefix` payload format from before the multi-quality rework; worker + smoke script on disk were already on `videoId`/`objectKey`
+ - **Comments fix**: `POST /api/videos/{id}/comments` was registered on the PUBLIC router but its handler requires the `JwtClaims` extension that only `auth_middleware` injects on protected routes → every comment creation returned 500. Moved the route to the protected router (commit `8a13a27`, deployed 07:35 UTC). Live-verified: POST → 201, comment appears in `GET /api/comments/{videoId}` with author joined
+  - **Notifications (shipped live, commit `a60b8df`, deployed 07:55–07:57 UTC)**:
+    - Migration `006_notifications.sql`: notifications table (user, channel, video, type, read_at) + per-user indexes
+    - db crate `notifications.rs`: `notify_new_uploads` (fan-out to subscribers, excludes owner), `list_for_user` (joined channel name/avatar + video title/thumbnail), `unread_count`, `mark_read`, `mark_all_read`
+    - Worker: after a video finalizes `ready`, fan out `new_upload` notifications (best-effort — never fails a finished transcode)
+    - API (protected): `GET /api/notifications`, `POST /api/notifications/read-all`, `POST /api/notifications/{id}/read`
+    - Frontend: `NotificationsBell.tsx` in Navbar — bell with unread badge, 30s polling, dropdown (channel avatar + video title + relative time), click marks read + opens video, mark-all-as-read
+    - Live E2E verified (`e2e-live-notifications.sh`): subscribe → upload → subscriber gets 1 notification, owner gets none, mark-read → unreadCount 0; dropdown screenshot-verified in browser
+  - **Channel avatar + banner upload (in flight)**:
+    - `presign_upload` accepts `purpose`: `avatar` (≤5MB, image only, `avatars/<uuid>.jpg`), `banner` (≤10MB, image only, `banners/<uuid>.jpg`), default `video`
+    - `users::update_avatar` db fn; `ChannelUpdateBody.avatar_url`; `PATCH /api/channels/{id}` sets the user's avatar
+    - `GET /api/channels/{id}` + PATCH response now include `channel.avatarUrl` (was missing — frontend read it but backend never sent it)
+    - Frontend: `ChannelEditor.tsx` (owner-only "Edit channel" on the channel page): name, description, avatar + banner file pickers with previews; presign → PUT → PATCH with public `/media/` URL; `mediaUrl()` helper in `lib/api.ts`
+  
+  ## In flight
+  - [ ] Channel avatar + banner upload: build, test, commit, push, live-verify (presign purpose + PATCH + channel page render)
+  - [ ] Add playlist / watch-next queue
+ ## In flight
+ - [ ] Notifications: wait for Kaiad build of `a60b8df` (backend + worker + frontend), then live E2E: subscribe → upload → notification appears → mark read → unreadCount 0
+ - [ ] Add playlist / watch-next queue
 
 ## Key Files
 - `backend/crates/api/src/routes.rs` — all API handlers
 - `backend/crates/storage/src/lib.rs` — `signed_get` and `public_url`
 - `backend/crates/api/src/state.rs` — `AppState` with `storage` field
-- `backend/crates/worker/src/jobs.rs` — multi-quality transcode pipeline, thumbnail, key format `videos/{id}_{quality}.mp4`
+- `backend/crates/worker/src/jobs.rs` — multi-quality transcode pipeline, thumbnail, key format `videos/{id}_{quality}.mp4`, notification fan-out after ready
+- `backend/crates/db/src/notifications.rs` — notification queries (fan-out, list, unread, mark read)
+- `frontend/src/components/NotificationsBell.tsx` — navbar bell + dropdown
+- `frontend/src/components/ChannelEditor.tsx` — owner channel editor (name/description/avatar/banner)
+- `e2e-live-notifications.sh` — live notifications E2E (gitignored like all *.sh)
 - `backend/crates/db/src/videos.rs` — `finalize` takes `streams` + updates `object_key`
 - `backend/crates/db/migrations/005_streams.sql` — `streams JSONB` column
 - `frontend/src/app/watch/[videoId]/page.tsx` — quality menu

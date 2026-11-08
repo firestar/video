@@ -75,9 +75,9 @@ function SubscriptionsContent() {
                 className="flex items-center gap-4 rounded-lg p-2 hover:bg-muted"
               >
                 <Avatar size="lg" className="size-10">
-                  {entry.channel.avatar_url ? (
+                  {entry.channel.avatarUrl ? (
                     <AvatarImage
-                      src={entry.channel.avatar_url}
+                      src={entry.channel.avatarUrl}
                       alt={entry.channel.name}
                     />
                   ) : (

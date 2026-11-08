@@ -20,6 +20,7 @@ pub struct ChannelUpdateBody {
     pub name: Option<String>,
     pub description: Option<String>,
     pub banner_url: Option<String>,
+    pub avatar_url: Option<String>,
 }
 
 /// Video PATCH body: update title / description / tags (owner only).
@@ -676,7 +677,41 @@ pub async fn presign_upload(
         return Err(ApiError::BadRequest("size must be > 0".into()));
     }
     let _ = file_name;
-    let object_key = format!("videos/{}", Uuid::new_v4());
+    let purpose = req
+        .get("purpose")
+        .and_then(|v| v.as_str())
+        .unwrap_or("video");
+    let object_key = match purpose {
+        "avatar" => {
+            if size > 5 * 1024 * 1024 {
+                return Err(ApiError::BadRequest("avatar max 5 MB".into()));
+            }
+            if !matches!(
+                content_type,
+                Some("image/jpeg") | Some("image/png") | Some("image/webp")
+            ) {
+                return Err(ApiError::BadRequest(
+                    "avatar must be image/jpeg, image/png or image/webp".into(),
+                ));
+            }
+            format!("avatars/{}.jpg", Uuid::new_v4())
+        }
+        "banner" => {
+            if size > 10 * 1024 * 1024 {
+                return Err(ApiError::BadRequest("banner max 10 MB".into()));
+            }
+            if !matches!(
+                content_type,
+                Some("image/jpeg") | Some("image/png") | Some("image/webp")
+            ) {
+                return Err(ApiError::BadRequest(
+                    "banner must be image/jpeg, image/png or image/webp".into(),
+                ));
+            }
+            format!("banners/{}.jpg", Uuid::new_v4())
+        }
+        _ => format!("videos/{}", Uuid::new_v4()),
+    };
     let upload_url = state
         .storage
         .presign_put(
@@ -934,6 +969,7 @@ pub async fn get_channel(
     let row = channels::find_by_id(&state.db, id)
         .await?
         .ok_or(ApiError::NotFound)?;
+    let user_id = row.user_id;
     let channel: domain::Channel = row.into();
     let subscriber_count = subscriptions::count_for_channel(&state.db, id).await?;
 
@@ -951,8 +987,15 @@ pub async fn get_channel(
     let video_rows = videos::list_for_channel(&state.db, id, limit, offset).await?;
     let videos_json = videos_with_channels(&state.db, &state.storage, &video_rows).await?;
 
+    let mut channel_json = serde_json::to_value(&channel).unwrap();
+    channel_json["avatarUrl"] = serde_json::json!(
+        users::find_by_id(&state.db, user_id)
+            .await?
+            .and_then(|u| u.avatar_url)
+    );
+
     Ok(Json(serde_json::json!({
-        "channel": channel,
+        "channel": channel_json,
         "subscriberCount": subscriber_count,
         "isSubscribed": is_subscribed,
         "videos": videos_json,
@@ -994,10 +1037,19 @@ async fn update_channel_inner(
     )
     .await?
     .ok_or(ApiError::NotFound)?;
+    if let Some(avatar_url) = body.avatar_url.as_deref().filter(|s| !s.is_empty()) {
+        users::update_avatar(&state.db, row.user_id, avatar_url).await?;
+    }
     let channel: domain::Channel = updated.into();
+    let mut channel_json = serde_json::to_value(&channel).unwrap();
+    channel_json["avatarUrl"] = serde_json::json!(
+        users::find_by_id(&state.db, row.user_id)
+            .await?
+            .and_then(|u| u.avatar_url)
+    );
     let subscriber_count = subscriptions::count_for_channel(&state.db, id).await?;
     Ok(Json(serde_json::json!({
-        "channel": channel,
+        "channel": channel_json,
         "subscriberCount": subscriber_count,
     })))
 }

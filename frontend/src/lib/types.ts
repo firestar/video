@@ -7,14 +7,13 @@ export interface User {
 
 export interface Channel {
   id: string;
-  user_id: string;
+  userId: string;
   name: string;
   handle: string;
   description?: string;
-  banner_url?: string;
-  avatar_url?: string;
-  subscriber_count?: number;
-  created_at: string;
+  bannerUrl?: string;
+  avatarUrl?: string;
+  createdAt: string;
 }
 
 export interface Video {

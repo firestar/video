@@ -113,10 +113,10 @@ function SearchContent() {
                       className="flex items-center gap-3 py-3 hover:bg-muted"
                     >
                       <Avatar size="sm" className="size-10">
-                        {c.avatar_url ? (
+                        {c.avatarUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
-                            src={c.avatar_url}
+                            src={c.avatarUrl}
                             alt={c.name}
                             className="size-full rounded-full object-cover"
                           />
