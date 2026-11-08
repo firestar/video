@@ -7,15 +7,24 @@ import { Button } from "@/components/ui/button";
 import { formatCount, formatDate } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import CommentSection from "@/components/CommentSection";
-import { Bell, BellOff, ThumbsUp, ThumbsDown } from "lucide-react";
+import { Bell, BellOff, ThumbsUp, ThumbsDown, SlidersHorizontal, Check } from "lucide-react";
 import RelatedVideos from "@/components/RelatedVideos";
 import { WatchPageSkeleton } from "@/components/Skeletons";
 import type { Video } from "@/lib/types";
+
+interface Stream {
+  quality: string;
+  width?: number;
+  height?: number;
+  sizeBytes?: number;
+  url: string;
+}
 
 interface WatchData {
   video: Video;
   channel: Video["channel"];
   streamUrl: string | null;
+  streams: Stream[];
 }
 
 function WatchContent() {
@@ -34,6 +43,10 @@ function WatchContent() {
   const [subscribed, setSubscribed] = useState(false);
 
   const [subHint, setSubHint] = useState<string | null>(null);
+
+  const [quality, setQuality] = useState<string | null>(null);
+  const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
+  const pendingTimeRef = useRef<number | null>(null);
 
   const viewedRef = useRef(false);
   const historySentRef = useRef(false);
@@ -72,6 +85,21 @@ function WatchContent() {
     };
   }, [videoId]);
 
+  const streams = data?.streams ?? [];
+  const activeStream =
+    streams.find((s) => s.quality === quality) ?? streams[0] ?? null;
+  const currentUrl = activeStream?.url ?? data?.streamUrl ?? null;
+
+  const switchQuality = useCallback((q: string) => {
+    setQualityMenuOpen(false);
+    setQuality((cur) => {
+      if (cur === q) return cur;
+      const el = videoRef.current;
+      if (el) pendingTimeRef.current = el.currentTime;
+      return q;
+    });
+  }, []);
+
   useEffect(() => {
     if (!data?.streamUrl) return;
     const el = videoRef.current;
@@ -79,7 +107,6 @@ function WatchContent() {
     el.muted = true;
     el.play().catch(() => {});
   }, [data?.streamUrl]);
-
   const toggleLike = useCallback(async () => {
     const next = !liked;
     const prevCount = likeCount;
@@ -182,28 +209,70 @@ function WatchContent() {
     <div className="mx-auto w-full max-w-[1750px] flex-1 px-4 py-4 lg:px-8">
       <div className="flex flex-col gap-6 lg:flex-row lg:gap-8">
         <div className="min-w-0 flex-1">
-          {data.streamUrl ? (
-            <video
-              key={videoId}
-              src={data.streamUrl}
-              ref={videoRef}
-              autoPlay
-              muted
-              controls
-              playsInline
-              onTimeUpdate={(e) => {
-                if (e.currentTarget.currentTime > 30) recordHistory();
-              }}
-              className="aspect-video w-full rounded-lg bg-black"
-            />
-          ) : (
-            <div className="flex aspect-video w-full items-center justify-center rounded-lg bg-black/60 text-sm text-white/60">
-              {video.status === "ready"
-                ? "Stream URL unavailable"
-                : `Video is ${video.status} — not ready to play yet`}
+           {currentUrl ? (
+            <div className="relative">
+              <video
+                key={videoId}
+                src={currentUrl}
+                ref={videoRef}
+                autoPlay
+                muted
+                controls
+                playsInline
+                preload="auto"
+                onLoadedMetadata={(e) => {
+                  if (pendingTimeRef.current != null) {
+                    e.currentTarget.currentTime = pendingTimeRef.current;
+                    pendingTimeRef.current = null;
+                  }
+                }}
+                onTimeUpdate={(e) => {
+                  if (e.currentTarget.currentTime > 30) recordHistory();
+                }}
+                className="aspect-video w-full rounded-lg bg-black"
+              />
+              {streams.length > 1 && (
+                <div className="absolute right-3 top-3 z-10">
+                  <button
+                    onClick={() => setQualityMenuOpen((o) => !o)}
+                    className="flex items-center gap-1.5 rounded-md bg-black/70 px-2.5 py-1.5 text-xs font-medium text-white backdrop-blur transition-colors hover:bg-black/90"
+                  >
+                    <SlidersHorizontal className="size-3.5" />
+                    {activeStream?.quality ?? "Auto"}
+                  </button>
+                  {qualityMenuOpen && (
+                    <div className="absolute right-0 mt-1 w-36 overflow-hidden rounded-md bg-black/90 py-1 text-xs text-white shadow-lg backdrop-blur">
+                      <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-white/50">
+                        Quality
+                      </div>
+                      {streams.map((s) => (
+                        <button
+                          key={s.quality}
+                          onClick={() => switchQuality(s.quality)}
+                          className={`flex w-full items-center justify-between px-3 py-1.5 hover:bg-white/10 ${
+                            s.quality === activeStream?.quality
+                              ? "font-semibold"
+                              : "text-white/80"
+                          }`}
+                        >
+                          <span>{s.quality}</span>
+                          {s.quality === activeStream?.quality && (
+                            <Check className="size-3.5" />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-          )}
-
+          ) : (
+             <div className="flex aspect-video w-full items-center justify-center rounded-lg bg-black/60 text-sm text-white/60">
+               {video.status === "ready"
+                 ? "Stream URL unavailable"
+                 : `Video is ${video.status} — not ready to play yet`}
+             </div>
+           )}
           <h1 className="mt-4 text-xl font-semibold leading-snug">{video.title}</h1>
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-4">

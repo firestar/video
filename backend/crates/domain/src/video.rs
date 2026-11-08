@@ -36,6 +36,19 @@ pub struct Video {
     pub created_at: DateTime<Utc>,
 }
 
+/// One transcode variant of a video (an entry of `videos.streams`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Stream {
+    /// Display label, e.g. "1080p", "720p" (or "default" for legacy single-stream videos).
+    pub quality: String,
+    pub width: i32,
+    pub height: i32,
+    /// Object key in the media bucket (signed on demand by the API).
+    pub object_key: String,
+    pub size_bytes: i64,
+}
+
 /// Fields set when a video row is first created (upload started).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]

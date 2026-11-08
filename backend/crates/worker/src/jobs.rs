@@ -20,9 +20,9 @@ use tracing::{info, warn};
 use crate::queue::{JobQueue, TranscodeJob};
 use crate::WorkerState;
 
-/// Parse `ffprobe -v quiet -print_format json -show_format -i <file>` output
-/// into the container duration in seconds.
-fn parse_duration(probe_stdout: &str) -> anyhow::Result<f64> {
+/// Parse `ffprobe -v quiet -print_format json -show_format -show_streams -i <file>`
+/// output into `(duration_secs, video_width, video_height)`.
+fn parse_probe(probe_stdout: &str) -> anyhow::Result<(f64, i32, i32)> {
     let v: Value = serde_json::from_str(probe_stdout)
         .map_err(|e| anyhow::anyhow!("ffprobe JSON parse: {e}"))?;
     let dur = v
@@ -30,18 +30,36 @@ fn parse_duration(probe_stdout: &str) -> anyhow::Result<f64> {
         .and_then(|f| f.get("duration"))
         .and_then(|d| d.as_str())
         .ok_or_else(|| anyhow::anyhow!("ffprobe output missing format.duration"))?;
-    dur.parse::<f64>()
-        .map_err(|e| anyhow::anyhow!("ffprobe duration parse: {e}"))
+    let dur = dur
+        .parse::<f64>()
+        .map_err(|e| anyhow::anyhow!("ffprobe duration parse: {e}"))?;
+    let (w, h) = v
+        .get("streams")
+        .and_then(|s| s.as_array())
+        .and_then(|s| {
+            s.iter()
+                .find(|st| st.get("codec_type").and_then(|c| c.as_str()) == Some("video"))
+        })
+        .map(|st| {
+            (
+                st.get("width").and_then(|x| x.as_i64()).unwrap_or(0) as i32,
+                st.get("height").and_then(|x| x.as_i64()).unwrap_or(0) as i32,
+            )
+        })
+        .filter(|(w, h)| *w > 0 && *h > 0)
+        .ok_or_else(|| anyhow::anyhow!("ffprobe output missing video stream dimensions"))?;
+    Ok((dur, w, h))
 }
 
-/// Run ffprobe on `input`, return the duration in seconds.
-async fn probe_duration(ffprobe: &str, input: &std::path::Path) -> anyhow::Result<f64> {
+/// Run ffprobe on `input`, return `(duration_secs, width, height)`.
+async fn probe(ffprobe: &str, input: &std::path::Path) -> anyhow::Result<(f64, i32, i32)> {
     let out = Command::new(ffprobe)
         .arg("-v")
         .arg("quiet")
         .arg("-print_format")
         .arg("json")
         .arg("-show_format")
+        .arg("-show_streams")
         .arg("-i")
         .arg(input)
         .output()
@@ -54,13 +72,34 @@ async fn probe_duration(ffprobe: &str, input: &std::path::Path) -> anyhow::Resul
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    parse_duration(&String::from_utf8_lossy(&out.stdout))
+    parse_probe(&String::from_utf8_lossy(&out.stdout))
 }
 
-/// Run ffmpeg transcode: H.264 + AAC, 1080p, faststart.
-async fn transcode(ffmpeg: &str, input: &std::path::Path, output: &std::path::Path) -> anyhow::Result<()> {
-    let out = Command::new(ffmpeg)
-        .arg("-y")
+/// Quality ladder (heights in px), highest first. The top rung is always the
+/// source's native height (capped at 1080p — never upscale); the rest are the
+/// standard rungs strictly below it.
+const QUALITY_RUNGS: [i32; 4] = [1080, 720, 480, 360];
+
+/// Choose the quality ladder for a source of `src_height` px, highest first.
+/// e.g. 1080 -> [1080, 720, 480, 360]; 540 -> [540, 480, 360]; 240 -> [240].
+fn quality_ladder(src_height: i32) -> Vec<i32> {
+    let top = src_height.min(1080).max(1);
+    let mut ladder: Vec<i32> = QUALITY_RUNGS.iter().copied().filter(|h| *h < top).collect();
+    ladder.insert(0, top);
+    ladder
+}
+
+/// Run ffmpeg transcode: H.264 + AAC, scaled to `height` (native when equal to
+/// `src_height`), faststart.
+async fn transcode(
+    ffmpeg: &str,
+    input: &std::path::Path,
+    output: &std::path::Path,
+    height: i32,
+    src_height: i32,
+) -> anyhow::Result<()> {
+    let mut cmd = Command::new(ffmpeg);
+    cmd.arg("-y")
         .arg("-i")
         .arg(input)
         .arg("-c:v")
@@ -68,28 +107,32 @@ async fn transcode(ffmpeg: &str, input: &std::path::Path, output: &std::path::Pa
         .arg("-preset")
         .arg("medium")
         .arg("-crf")
-        .arg("23")
-        .arg("-vf")
-        .arg("scale=-2:1080")
-        .arg("-c:a")
+        .arg("23");
+    if height < src_height {
+        cmd.arg("-vf").arg(format!("scale=-2:{height}"));
+    }
+    let audio_bitrate = if height >= 720 { "192k" } else { "128k" };
+    cmd.arg("-c:a")
         .arg("aac")
         .arg("-b:a")
-        .arg("192k")
+        .arg(audio_bitrate)
         .arg("-movflags")
         .arg("+faststart")
-        .arg(output)
+        .arg(output);
+    let out = cmd
         .output()
         .await
         .map_err(|e| anyhow::anyhow!("ffmpeg spawn: {e}"))?;
     if !out.status.success() {
         bail!(
-            "ffmpeg transcode failed ({}): {}",
+            "ffmpeg transcode {height}p failed ({}): {}",
             out.status,
             String::from_utf8_lossy(&out.stderr)
         );
     }
     Ok(())
 }
+
 
 /// Run ffmpeg to extract a JPEG thumbnail at 25% of the duration.
 async fn thumbnail(ffmpeg: &str, input: &std::path::Path, duration: f64, out: &std::path::Path) -> anyhow::Result<()> {
@@ -118,7 +161,7 @@ async fn thumbnail(ffmpeg: &str, input: &std::path::Path, duration: f64, out: &s
     Ok(())
 }
 
-/// One full pipeline attempt. Returns `(duration_secs, output_size_bytes)`.
+/// One full pipeline attempt. Returns `(duration_secs, total_output_bytes)`.
 async fn process_once(state: &WorkerState, job: &TranscodeJob) -> anyhow::Result<(i32, i64)> {
     let video_id = job.video_id;
     info!(video_id = %video_id, object_key = %job.object_key, "processing (attempt)");
@@ -126,7 +169,6 @@ async fn process_once(state: &WorkerState, job: &TranscodeJob) -> anyhow::Result
     // 1. Download source from R2 to a temp file.
     let tmp = TempDir::new().map_err(|e| anyhow::anyhow!("tempdir: {e}"))?;
     let src_path = tmp.path().join("source");
-    let out_path = tmp.path().join(format!("{video_id}.mp4"));
     let thumb_path = tmp.path().join("thumb.jpg");
 
     let source_bytes = state
@@ -139,26 +181,44 @@ async fn process_once(state: &WorkerState, job: &TranscodeJob) -> anyhow::Result
         .map_err(|e| anyhow::anyhow!("write source: {e}"))?;
     info!(video_id = %video_id, bytes = source_bytes.len(), "source downloaded");
 
-    // 2. ffprobe → duration.
-    let duration = probe_duration(&state.config.ffprobe_path, &src_path).await?;
-    info!(video_id = %video_id, duration_secs = duration, "probed");
+    // 2. ffprobe → duration + source dimensions.
+    let (duration, _src_w, src_h) = probe(&state.config.ffprobe_path, &src_path).await?;
+    let ladder = quality_ladder(src_h);
+    info!(video_id = %video_id, duration_secs = duration, src_height = src_h, ladder = ?ladder, "probed");
 
-    // 3. Transcode.
-    transcode(&state.config.ffmpeg_path, &src_path, &out_path).await?;
+    // 3. Transcode + upload each quality (highest first; rung 0 = native, no scale).
+    let mut streams: Vec<Value> = Vec::with_capacity(ladder.len());
+    let mut total_size: i64 = 0;
+    for h in ladder.iter() {
+        let out_path = tmp.path().join(format!("{video_id}_{h}p.mp4"));
+        transcode(&state.config.ffmpeg_path, &src_path, &out_path, *h, src_h).await?;
+
+        // Exact output dimensions (scale=-2 rounds the width to even).
+        let (_d, w, hh) = probe(&state.config.ffprobe_path, &out_path).await?;
+
+        let out_key = format!("videos/{video_id}_{h}p.mp4");
+        let out_bytes = fs::read(&out_path).await.map_err(|e| anyhow::anyhow!("read output: {e}"))?;
+        state
+            .storage
+            .upload(&out_key, out_bytes.clone().into(), "video/mp4")
+            .await
+            .map_err(|e| anyhow::anyhow!("upload {h}p: {e}"))?;
+        total_size += out_bytes.len() as i64;
+
+        streams.push(serde_json::json!({
+            "quality": format!("{h}p"),
+            "width": w,
+            "height": hh,
+            "objectKey": out_key,
+            "sizeBytes": out_bytes.len() as i64,
+        }));
+        info!(video_id = %video_id, quality = %format!("{h}p"), bytes = out_bytes.len(), "variant uploaded");
+    }
 
     // 4. Thumbnail at 25% of duration.
     thumbnail(&state.config.ffmpeg_path, &src_path, duration, &thumb_path).await?;
 
-    // 5. Upload transcode to R2.
-    let out_key = format!("videos/{video_id}.mp4");
-    let out_bytes = fs::read(&out_path).await.map_err(|e| anyhow::anyhow!("read output: {e}"))?;
-    state
-        .storage
-        .upload(&out_key, out_bytes.clone().into(), "video/mp4")
-        .await
-        .map_err(|e| anyhow::anyhow!("upload output: {e}"))?;
-
-    // 6. Upload thumbnail to R2.
+    // 5. Upload thumbnail to R2.
     let thumb_key = format!("thumbnails/{video_id}.jpg");
     let thumb_bytes = fs::read(&thumb_path).await.map_err(|e| anyhow::anyhow!("read thumbnail: {e}"))?;
     state
@@ -167,18 +227,23 @@ async fn process_once(state: &WorkerState, job: &TranscodeJob) -> anyhow::Result
         .await
         .map_err(|e| anyhow::anyhow!("upload thumbnail: {e}"))?;
 
-    // 7. Build public URLs.
-    let _video_url = state.storage.public_url(&out_key);
-    let thumbnail_url = state.storage.public_url(&thumb_key);
-
-    // 8. Finalize DB row.
+    // 6. Finalize DB row (top quality becomes the canonical object_key).
+    let streams_json = Value::Array(streams);
+    let top_key = streams_json
+        .get(0)
+        .and_then(|s| s.get("objectKey"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     videos::finalize(
         &state.db,
         video_id,
         VideoStatus::Ready,
         Some(duration as i32),
-        Some(out_bytes.len() as i64),
-        thumbnail_url.as_deref(),
+        Some(total_size),
+        state.storage.public_url(&thumb_key).as_deref(),
+        Some(&streams_json),
+        Some(&top_key),
     )
     .await
     .map_err(|e| anyhow::anyhow!("db finalize: {e}"))?;
@@ -186,10 +251,11 @@ async fn process_once(state: &WorkerState, job: &TranscodeJob) -> anyhow::Result
     info!(
         video_id = %video_id,
         duration_secs = duration as i32,
-        size_bytes = out_bytes.len() as i64,
+        size_bytes = total_size,
+        variants = ladder.len(),
         "job done (ready)"
     );
-    Ok((duration as i32, out_bytes.len() as i64))
+    Ok((duration as i32, total_size))
 }
 
 /// Process a transcode job with retry.
@@ -229,7 +295,7 @@ pub async fn process(
     // Final failure: mark the video failed, publish event.
     let err = last_err.expect("loop always sets last_err");
     if let Err(db_err) =
-        videos::finalize(&state.db, job.video_id, VideoStatus::Failed, None, None, None).await
+        videos::finalize(&state.db, job.video_id, VideoStatus::Failed, None, None, None, None, None).await
     {
         warn!(video_id = %job.video_id, error = %db_err, "failed to mark video failed in db");
     }
@@ -245,20 +311,57 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_duration_ok() {
-        let json = r#"{ "format": { "duration": "42.5" } }"#;
-        assert_eq!(parse_duration(json).unwrap(), 42.5);
+    fn parse_probe_ok() {
+        let json = r#"{ "format": { "duration": "42.5" }, "streams": [ { "codec_type": "video", "width": 1280, "height": 720 } ] }"#;
+        assert_eq!(parse_probe(json).unwrap(), (42.5, 1280, 720));
     }
 
     #[test]
-    fn parse_duration_missing() {
-        let json = r#"{ "format": {} }"#;
-        assert!(parse_duration(json).is_err());
+    fn parse_probe_picks_video_stream() {
+        let json = r#"{ "format": { "duration": "1.0" }, "streams": [ { "codec_type": "audio" }, { "codec_type": "video", "width": 640, "height": 360 } ] }"#;
+        assert_eq!(parse_probe(json).unwrap(), (1.0, 640, 360));
     }
 
     #[test]
-    fn parse_duration_bad() {
-        let json = r#"{ "format": { "duration": "not-a-number" } }"#;
-        assert!(parse_duration(json).is_err());
+    fn parse_probe_missing_duration() {
+        let json = r#"{ "format": {}, "streams": [ { "codec_type": "video", "width": 1, "height": 1 } ] }"#;
+        assert!(parse_probe(json).is_err());
+    }
+
+    #[test]
+    fn parse_probe_missing_video_stream() {
+        let json = r#"{ "format": { "duration": "1.0" }, "streams": [ { "codec_type": "audio" } ] }"#;
+        assert!(parse_probe(json).is_err());
+    }
+
+    #[test]
+    fn parse_probe_bad_duration() {
+        let json = r#"{ "format": { "duration": "not-a-number" }, "streams": [ { "codec_type": "video", "width": 1, "height": 1 } ] }"#;
+        assert!(parse_probe(json).is_err());
+    }
+
+    #[test]
+    fn ladder_1080() {
+        assert_eq!(quality_ladder(1080), vec![1080, 720, 480, 360]);
+    }
+
+    #[test]
+    fn ladder_4k_caps_at_1080() {
+        assert_eq!(quality_ladder(2160), vec![1080, 720, 480, 360]);
+    }
+
+    #[test]
+    fn ladder_720() {
+        assert_eq!(quality_ladder(720), vec![720, 480, 360]);
+    }
+
+    #[test]
+    fn ladder_540_includes_native_top() {
+        assert_eq!(quality_ladder(540), vec![540, 480, 360]);
+    }
+
+    #[test]
+    fn ladder_240_single() {
+        assert_eq!(quality_ladder(240), vec![240]);
     }
 }

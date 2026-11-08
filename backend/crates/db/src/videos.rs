@@ -23,6 +23,9 @@ pub struct VideoRow {
     pub like_count: i64,
     pub published_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Multi-quality transcode variants (worker-written), e.g.
+    /// `[{"quality":"1080p",...,"objectKey":"videos/<id>_1080p.mp4"}]`.
+    pub streams: Option<serde_json::Value>,
 }
 
 fn status_to_enum(s: &str) -> VideoStatus {
@@ -112,7 +115,9 @@ pub async fn find_by_id_all(
     q.fetch_all(pool).await
 }
 
-/// Worker finalization: set status, duration, size, thumbnail, publish time.
+/// Worker finalization: set status, duration, size, thumbnail, publish time,
+/// the multi-quality `streams` array, and (optionally) the canonical
+/// `object_key` (the worker points it at the top-quality transcode output).
 pub async fn finalize(
     pool: &Pool,
     id: Uuid,
@@ -120,6 +125,8 @@ pub async fn finalize(
     duration_secs: Option<i32>,
     file_size: Option<i64>,
     thumbnail_url: Option<&str>,
+    streams: Option<&serde_json::Value>,
+    object_key: Option<&str>,
 ) -> Result<Option<VideoRow>, sqlx::Error> {
     let status_str = enum_to_str(status);
     sqlx::query_as(
@@ -129,6 +136,8 @@ pub async fn finalize(
             duration_secs = $3,
             file_size = $4,
             thumbnail_url = COALESCE($5, thumbnail_url),
+            streams = COALESCE($6, streams),
+            object_key = COALESCE($7, object_key),
             published_at = CASE WHEN $2 = 'ready' AND published_at IS NULL
                 THEN now() ELSE published_at END
         WHERE id = $1
@@ -140,6 +149,8 @@ pub async fn finalize(
     .bind(duration_secs)
     .bind(file_size)
     .bind(thumbnail_url)
+    .bind(streams)
+    .bind(object_key)
     .fetch_optional(pool)
     .await
 }
