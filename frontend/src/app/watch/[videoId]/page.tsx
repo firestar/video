@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { formatCount, formatDate } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import CommentSection from "@/components/CommentSection";
-import { Bell, BellOff, ThumbsUp, ThumbsDown, SlidersHorizontal, Check, ListVideo, Plus, Share2 } from "lucide-react";
+import { Bell, BellOff, ThumbsUp, ThumbsDown, SlidersHorizontal, Check, ListVideo, Plus, Share2, Repeat, Gauge } from "lucide-react";
 import RelatedVideos from "@/components/RelatedVideos";
 import WatchQueue from "@/components/WatchQueue";
 import { useWatchQueue, WatchQueueProvider } from "@/lib/watch-queue";
@@ -28,6 +28,7 @@ interface WatchData {
   streamUrl: string | null;
   streams: Stream[];
 }
+const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
 function WatchContent() {
   const params = useParams<{ videoId: string }>();
@@ -107,11 +108,15 @@ function WatchContent() {
   );
   const [quality, setQuality] = useState<string | null>(null);
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const [loopOn, setLoopOn] = useState(false);
+  const [speedMenuOpen, setSpeedMenuOpen] = useState(false);
   const pendingTimeRef = useRef<number | null>(null);
 
   const viewedRef = useRef(false);
   const historySentRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const playerRef = useRef<HTMLDivElement>(null);
   const recordHistory = useCallback(() => {
     if (historySentRef.current || !videoId || !getToken()) return;
     historySentRef.current = true;
@@ -174,6 +179,74 @@ function WatchContent() {
     el.muted = true;
     el.play().catch(() => {});
   }, [data?.streamUrl]);
+  // Apply playback rate + loop whenever they change or the media reloads.
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    el.playbackRate = speed;
+    el.loop = loopOn;
+  }, [speed, loopOn, currentUrl, videoId]);
+
+  // YouTube-style keyboard shortcuts (ignored while typing in a field).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = videoRef.current;
+      if (!el) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      switch (k) {
+        case " ":
+        case "k":
+          e.preventDefault();
+          if (el.paused) el.play().catch(() => {});
+          else el.pause();
+          break;
+        case "j":
+          el.currentTime -= 10;
+          break;
+        case "l":
+          el.currentTime += 10;
+          break;
+        case "arrowleft":
+          el.currentTime -= 5;
+          break;
+        case "arrowright":
+          el.currentTime += 5;
+          break;
+        case ",":
+          el.currentTime -= 1;
+          break;
+        case ".":
+          el.currentTime += 1;
+          break;
+        case "m":
+          el.muted = !el.muted;
+          break;
+        case "f":
+          if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+          else playerRef.current?.requestFullscreen().catch(() => {});
+          break;
+        case "arrowup":
+          e.preventDefault();
+          el.muted = false;
+          el.volume = Math.min(1, el.volume + 0.05);
+          break;
+        case "arrowdown":
+          e.preventDefault();
+          el.volume = Math.max(0, el.volume - 0.05);
+          break;
+        default:
+          if (/^[0-9]$/.test(k)) {
+            const d = el.duration;
+            if (d && isFinite(d)) el.currentTime = (d * parseInt(k, 10)) / 10;
+          }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const toggleLike = useCallback(async () => {
     const next = !liked;
     const prevCount = likeCount;
@@ -277,55 +350,102 @@ function WatchContent() {
       <div className="flex flex-col gap-6 lg:flex-row lg:gap-8">
         <div className="min-w-0 flex-1">
            {currentUrl ? (
-            <div className="relative">
-              <video
-                key={videoId}
-                src={currentUrl}
-                ref={videoRef}
-                autoPlay
-                muted
-                controls
-                onTimeUpdate={(e) => {
-                  if (e.currentTarget.currentTime > 30) recordHistory();
-                }}
-                onEnded={handleEnded}
-                className="aspect-video w-full rounded-lg bg-black"
-              />
-              {streams.length > 1 && (
-                <div className="absolute right-3 top-3 z-10">
-                  <button
-                    onClick={() => setQualityMenuOpen((o) => !o)}
-                    className="flex items-center gap-1.5 rounded-md bg-black/70 px-2.5 py-1.5 text-xs font-medium text-white backdrop-blur transition-colors hover:bg-black/90"
-                  >
-                    <SlidersHorizontal className="size-3.5" />
-                    {activeStream?.quality ?? "Auto"}
-                  </button>
-                  {qualityMenuOpen && (
-                    <div className="absolute right-0 mt-1 w-36 overflow-hidden rounded-md bg-black/90 py-1 text-xs text-white shadow-lg backdrop-blur">
-                      <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-white/50">
-                        Quality
-                      </div>
-                      {streams.map((s) => (
-                        <button
-                          key={s.quality}
-                          onClick={() => switchQuality(s.quality)}
-                          className={`flex w-full items-center justify-between px-3 py-1.5 hover:bg-white/10 ${
-                            s.quality === activeStream?.quality
-                              ? "font-semibold"
-                              : "text-white/80"
-                          }`}
-                        >
-                          <span>{s.quality}</span>
-                          {s.quality === activeStream?.quality && (
-                            <Check className="size-3.5" />
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+             <div className="relative" ref={playerRef}>
+               <video
+                 key={videoId}
+                 src={currentUrl}
+                 ref={videoRef}
+                 autoPlay
+                 muted
+                 controls
+                 onTimeUpdate={(e) => {
+                   if (e.currentTarget.currentTime > 30) recordHistory();
+                 }}
+                 onEnded={handleEnded}
+                 className="aspect-video w-full rounded-lg bg-black"
+               />
+               <div className="absolute right-3 top-3 z-10 flex items-start gap-2">
+                 <button
+                   onClick={() => setLoopOn((l) => !l)}
+                   aria-pressed={loopOn}
+                   title="Loop"
+                   className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium backdrop-blur transition-colors ${
+                     loopOn
+                       ? "bg-white text-black"
+                       : "bg-black/70 text-white hover:bg-black/90"
+                   }`}
+                 >
+                   <Repeat className="size-3.5" />
+                 </button>
+                 <div className="relative">
+                   <button
+                     onClick={() => setSpeedMenuOpen((o) => !o)}
+                     title="Playback speed"
+                     className="flex items-center gap-1.5 rounded-md bg-black/70 px-2.5 py-1.5 text-xs font-medium text-white backdrop-blur transition-colors hover:bg-black/90"
+                   >
+                     <Gauge className="size-3.5" />
+                     {speed === 1 ? "1x" : `${speed}x`}
+                   </button>
+                   {speedMenuOpen && (
+                     <div className="absolute right-0 mt-1 w-32 overflow-hidden rounded-md bg-black/90 py-1 text-xs text-white shadow-lg backdrop-blur">
+                       <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-white/50">
+                         Speed
+                       </div>
+                       {SPEEDS.map((s) => (
+                         <button
+                           key={s}
+                           onClick={() => {
+                             setSpeed(s);
+                             setSpeedMenuOpen(false);
+                           }}
+                           className={`flex w-full items-center justify-between px-3 py-1.5 hover:bg-white/10 ${
+                             s === speed ? "font-semibold" : "text-white/80"
+                           }`}
+                         >
+                           <span>{s === 1 ? "Normal" : `${s}x`}</span>
+                           {s === speed && <Check className="size-3.5" />}
+                         </button>
+                       ))}
+                     </div>
+                   )}
+                 </div>
+                 {streams.length > 1 && (
+                   <div className="relative">
+                     <button
+                       onClick={() => setQualityMenuOpen((o) => !o)}
+                       title="Quality"
+                       className="flex items-center gap-1.5 rounded-md bg-black/70 px-2.5 py-1.5 text-xs font-medium text-white backdrop-blur transition-colors hover:bg-black/90"
+                     >
+                       <SlidersHorizontal className="size-3.5" />
+                       {activeStream?.quality ?? "Auto"}
+                     </button>
+                     {qualityMenuOpen && (
+                       <div className="absolute right-0 mt-1 w-36 overflow-hidden rounded-md bg-black/90 py-1 text-xs text-white shadow-lg backdrop-blur">
+                         <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-white/50">
+                           Quality
+                         </div>
+                         {streams.map((s) => (
+                           <button
+                             key={s.quality}
+                             onClick={() => switchQuality(s.quality)}
+                             className={`flex w-full items-center justify-between px-3 py-1.5 hover:bg-white/10 ${
+                               s.quality === activeStream?.quality
+                                 ? "font-semibold"
+                                 : "text-white/80"
+                             }`}
+                           >
+                             <span>{s.quality}</span>
+                             {s.quality === activeStream?.quality && (
+                               <Check className="size-3.5" />
+                             )}
+                           </button>
+                         ))}
+                       </div>
+                     )}
+                   </div>
+                 )}
+               </div>
+             </div>
           ) : (
              <div className="flex aspect-video w-full items-center justify-center rounded-lg bg-black/60 text-sm text-white/60">
                {video.status === "ready"
