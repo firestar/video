@@ -61,11 +61,13 @@
       - Frontend: `/playlists` (list + create form), `/playlists/{id}` (detail: edit/delete, remove video, video grid), "Save to playlist" button on watch page (dropdown of playlists, check on added), Sidebar "Playlists" link
       - `cargo test --workspace` (40 tests incl. 2 new playlist) green; `tsc --noEmit` + `next build` green
       - Live E2E verified (`e2e-playlist.sh`): create → add 2 videos (count 2, idempotent re-add) → list → detail (public) → remove → count 1 → delete; private playlist correctly 404 for anonymous
-    - **Watch-next queue (in progress — frontend built, tsc + next build green, pending deploy)**:
+    - **Watch-next queue (shipped — deployed 567cf06, verified in browser)**:
       - `lib/watch-queue.tsx`: `WatchQueueProvider` context — queue persisted to localStorage (hydrated on mount to avoid SSR mismatch), `addToQueue`/`removeFromQueue`/`shift`/`clear`/`isInQueue`
       - `components/WatchQueue.tsx`: "Up next (N)" panel — thumbnails, reorder-free, remove + clear, "next up" / "now playing" markers
       - `RelatedVideos.tsx`: per-card "Add to queue" button (check when queued)
       - Watch page: `onEnded` → `shift()` → `router.push` next video (auto-advance); provider wraps the page; queue panel in both mobile + desktop columns
+      - Verified live: add to queue → "Up next (1)" panel + "next up" label + related card checkmark; 3s video auto-advanced to the queued video
+    - **Share button (in progress — frontend built, tsc + next build green, pending deploy)**: watch-page "Share" button copies the video URL to the clipboard (green "Copied!" for 2s), with a `window.prompt` fallback when the clipboard API is unavailable
 
 ## Key Files
 - `backend/crates/api/src/routes.rs` — all API handlers

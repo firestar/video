@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { formatCount, formatDate } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import CommentSection from "@/components/CommentSection";
-import { Bell, BellOff, ThumbsUp, ThumbsDown, SlidersHorizontal, Check, ListVideo, Plus } from "lucide-react";
+import { Bell, BellOff, ThumbsUp, ThumbsDown, SlidersHorizontal, Check, ListVideo, Plus, Share2 } from "lucide-react";
 import RelatedVideos from "@/components/RelatedVideos";
 import WatchQueue from "@/components/WatchQueue";
 import { useWatchQueue, WatchQueueProvider } from "@/lib/watch-queue";
@@ -50,6 +50,18 @@ function WatchContent() {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [addedTo, setAddedTo] = useState<Set<string>>(new Set());
   const [playlistBusy, setPlaylistBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const shareVideo = useCallback(async () => {
+    const url = `${window.location.origin}/watch/${videoId}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback: prompt with the URL
+      window.prompt("Copy this link:", url);
+    }
+  }, [videoId]);
 
   const loadPlaylists = useCallback(async () => {
     if (!getToken()) return;
@@ -378,6 +390,16 @@ function WatchContent() {
                   <ThumbsDown className="size-4" />
                 </button>
               </div>
+              <button
+                onClick={shareVideo}
+                className={`flex h-9 items-center gap-2 rounded-full border border-border pl-4 pr-3 text-sm hover:bg-muted ${
+                  copied ? "text-green-500" : "text-muted-foreground"
+                }`}
+                aria-label="Share video"
+              >
+                {copied ? <Check className="size-4" /> : <Share2 className="size-4" />}
+                {copied ? "Copied!" : "Share"}
+              </button>
               <div className="relative">
                 <button
                   onClick={openPlaylistMenu}
