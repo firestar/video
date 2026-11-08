@@ -3,7 +3,7 @@
 use uuid::Uuid;
 
 use crate::pool::Pool;
-use domain::{Video, VideoCreate, VideoStatus};
+use domain::{Video, VideoCreate, VideoStatus, VideoVisibility};
 
 use sqlx::FromRow;
 
@@ -17,6 +17,7 @@ pub struct VideoRow {
     pub object_key: String,
     pub tags: Vec<String>,
     pub status: String,
+    pub visibility: String,
     pub duration_secs: Option<i32>,
     pub file_size: Option<i64>,
     pub view_count: i64,
@@ -46,6 +47,10 @@ fn enum_to_str(s: VideoStatus) -> &'static str {
     }
 }
 
+fn visibility_to_enum(s: &str) -> VideoVisibility {
+    VideoVisibility::parse(s).unwrap_or(VideoVisibility::Public)
+}
+
 impl From<VideoRow> for Video {
     fn from(r: VideoRow) -> Self {
         Video {
@@ -57,6 +62,7 @@ impl From<VideoRow> for Video {
             object_key: r.object_key,
             tags: r.tags,
             status: status_to_enum(&r.status),
+            visibility: visibility_to_enum(&r.visibility),
             duration_secs: r.duration_secs,
             file_size: r.file_size,
             view_count: r.view_count,
@@ -69,10 +75,11 @@ impl From<VideoRow> for Video {
 
 /// Create a processing video row (upload completed, awaiting transcode).
 pub async fn create(pool: &Pool, req: &VideoCreate) -> Result<VideoRow, sqlx::Error> {
+    let visibility = req.visibility.as_str();
     sqlx::query_as(
         r#"
-        INSERT INTO videos (channel_id, title, description, object_key, tags, status)
-        VALUES ($1, $2, $3, $4, $5, 'processing')
+        INSERT INTO videos (channel_id, title, description, object_key, tags, status, visibility)
+        VALUES ($1, $2, $3, $4, $5, 'processing', $6)
         RETURNING *
         "#,
     )
@@ -81,8 +88,47 @@ pub async fn create(pool: &Pool, req: &VideoCreate) -> Result<VideoRow, sqlx::Er
     .bind(req.description.as_deref())
     .bind(req.object_key.as_str())
     .bind(&req.tags)
+    .bind(visibility)
     .fetch_one(pool)
     .await
+}
+
+/// Owner edit: persist any provided fields (title / description / tags /
+/// visibility). Returns the updated row.
+pub async fn update(
+    pool: &Pool,
+    id: Uuid,
+    title: Option<&str>,
+    description: Option<&str>,
+    tags: Option<&[String]>,
+    visibility: Option<&str>,
+) -> Result<Option<VideoRow>, sqlx::Error> {
+    sqlx::query_as(
+        r#"
+        UPDATE videos SET
+            title = COALESCE($2, title),
+            description = CASE WHEN $3::TEXT IS NULL THEN description ELSE $3 END,
+            tags = COALESCE($4, tags),
+            visibility = COALESCE($5, visibility)
+        WHERE id = $1
+        RETURNING *
+        "#,
+    )
+    .bind(id)
+    .bind(title)
+    .bind(description)
+    .bind(tags)
+    .bind(visibility)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Delete a video row. Returns the deleted row (for the API response).
+pub async fn delete(pool: &Pool, id: Uuid) -> Result<Option<VideoRow>, sqlx::Error> {
+    sqlx::query_as(r#"DELETE FROM videos WHERE id = $1 RETURNING *"#)
+        .bind(id)
+        .fetch_optional(pool)
+        .await
 }
 
 pub async fn find_by_id(pool: &Pool, id: Uuid) -> Result<Option<VideoRow>, sqlx::Error> {
@@ -206,7 +252,7 @@ pub async fn list_public(
     };
     let sql = format!(
         r#"SELECT * FROM videos
-        WHERE status = 'ready'
+        WHERE status = 'ready' AND visibility = 'public'
         ORDER BY {order_by}
         LIMIT $1 OFFSET $2"#
     );
@@ -224,7 +270,7 @@ pub async fn count_and_views_for_channel(
 ) -> Result<(i64, i64), sqlx::Error> {
     let (n, views) = sqlx::query_as("
         SELECT COUNT(*), COALESCE(SUM(view_count), 0)::BIGINT
-        FROM videos WHERE channel_id = $1 AND status = 'ready'")
+        FROM videos WHERE channel_id = $1 AND status = 'ready' AND visibility = 'public'")
         .bind(channel_id)
         .fetch_one(pool)
         .await?;
@@ -241,7 +287,7 @@ pub async fn list_for_channel(
     sqlx::query_as(
         r#"
         SELECT * FROM videos
-        WHERE channel_id = $1 AND status = 'ready'
+        WHERE channel_id = $1 AND status = 'ready' AND visibility = 'public'
         ORDER BY published_at DESC NULLS LAST, created_at DESC
         LIMIT $2 OFFSET $3
         "#,
@@ -281,7 +327,7 @@ pub async fn search(pool: &Pool, query: &str, limit: i64) -> Result<Vec<VideoRow
     sqlx::query_as(
         r#"
         SELECT * FROM videos
-        WHERE status = 'ready'
+        WHERE status = 'ready' AND visibility = 'public'
           AND search_vector @@ plainto_tsquery('english', $1)
         ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
         LIMIT $2
@@ -302,7 +348,7 @@ pub async fn trending_recent(
     sqlx::query_as(
         r#"
         SELECT * FROM videos
-        WHERE status = 'ready'
+        WHERE status = 'ready' AND visibility = 'public'
           AND published_at IS NOT NULL
           AND published_at >= now() - interval '7 days'
         ORDER BY view_count DESC, created_at DESC
@@ -326,6 +372,7 @@ pub async fn find_related(
         SELECT * FROM videos
         WHERE id != $1
           AND status = 'ready'
+          AND visibility = 'public'
           AND (
               channel_id = (SELECT channel_id FROM videos WHERE id = $1)
               OR tags && (SELECT tags FROM videos WHERE id = $1)

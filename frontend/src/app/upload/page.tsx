@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import type { VideoVisibility } from "@/lib/types";
 
 const MAX_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
 
@@ -34,6 +35,7 @@ export default function UploadPage() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState("");
+  const [visibility, setVisibility] = useState<VideoVisibility>("public");
 
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0);
@@ -125,6 +127,7 @@ export default function UploadPage() {
             .map((t) => t.trim())
             .filter(Boolean),
           object_key: presign.object_key,
+          visibility,
         }),
       });
 
@@ -222,7 +225,41 @@ export default function UploadPage() {
             onChange={(e) => setTags(e.target.value)}
             disabled={busy}
           />
-
+          <div>
+            <p className="mb-2 text-sm font-medium">Visibility</p>
+            <div className="flex flex-col gap-2">
+              {(
+                [
+                  ["public", "Public", "Anyone can find this video on synload and watch it"],
+                  ["unlisted", "Unlisted", "Anyone with the link can watch this video; it won't appear in listings or search"],
+                  ["private", "Private", "Only you can watch this video"],
+                ] as [VideoVisibility, string, string][]
+              ).map(([value, label, hint]) => (
+                <label
+                  key={value}
+                  className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm transition-colors ${
+                    visibility === value
+                      ? "border-blue-500 bg-blue-500/10"
+                      : "border-border hover:border-foreground/40"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value={value}
+                    checked={visibility === value}
+                    onChange={() => setVisibility(value)}
+                    disabled={busy}
+                    className="mt-0.5 accent-blue-500"
+                  />
+                  <span>
+                    <span className="font-medium">{label}</span>
+                    <span className="block text-muted-foreground">{hint}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
           {phase === "uploading" && (
             <div>
               <div className="h-2 w-full overflow-hidden rounded-full bg-muted">

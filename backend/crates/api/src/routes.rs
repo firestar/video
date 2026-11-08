@@ -9,7 +9,7 @@ use db::{channels, comments, history, likes, notifications, playlists, subscript
 use domain::{
     CommentCreate, HistoryQuery, JwtClaims, LoginRequest, PlaylistCreate, PlaylistItemAdd,
     PlaylistUpdate, RegisterRequest, SubscribeRequest, TokenResponse, User, Video, VideoCreate,
-    VideoStatus,
+    VideoStatus, VideoVisibility,
 };
 
 use crate::error::ApiError;
@@ -31,6 +31,7 @@ pub struct VideoUpdateBody {
     pub title: Option<String>,
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
+    pub visibility: Option<String>,
 }
 
 /// Query params for GET /api/home/feed.
@@ -90,6 +91,16 @@ pub async fn create_video_with_auth(
                 .collect()
         })
         .unwrap_or_default();
+    let visibility = req_json
+        .get("visibility")
+        .and_then(|v| v.as_str())
+        .map(|s| {
+            VideoVisibility::parse(s).ok_or_else(|| {
+                ApiError::BadRequest("visibility must be public, unlisted, or private".into())
+            })
+        })
+        .transpose()?
+        .unwrap_or_default();
 
     let channel_row = channels::find_by_user(&state.db, claims.sub)
         .await?
@@ -100,6 +111,7 @@ pub async fn create_video_with_auth(
         description,
         object_key,
         tags,
+        visibility,
     };
     let row = videos::create(&state.db, &vc).await?;
     let video: domain::Video = row.into();
@@ -280,6 +292,7 @@ async fn videos_with_channels(
 /// stream from the canonical `object_key`.
 pub async fn get_video(
     State(state): State<AppState>,
+    claims: Option<Extension<JwtClaims>>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let row = videos::find_by_id(&state.db, id)
@@ -289,6 +302,17 @@ pub async fn get_video(
         channels::find_by_id(&state.db, row.channel_id)
             .await?
             .map(Into::into);
+    // Private videos are only visible to the channel owner. 404 (not 403)
+    // so existence is not leaked to anonymous users.
+    if row.visibility == "private" {
+        let allowed = matches!(
+            (claims.as_ref(), &channel),
+            (Some(c), Some(ch)) if ch.user_id == c.sub
+        );
+        if !allowed {
+            return Err(ApiError::NotFound);
+        }
+    }
     let streams_raw: Option<serde_json::Value> = row.streams.clone();
     let video: Video = row.into();
 
@@ -394,6 +418,13 @@ pub async fn update_video(
     Path(id): Path<Uuid>,
     Json(body): Json<VideoUpdateBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    if let Some(v) = &body.visibility {
+        if VideoVisibility::parse(v).is_none() {
+            return Err(ApiError::BadRequest(
+                "visibility must be public, unlisted, or private".into(),
+            ));
+        }
+    }
     let row = videos::find_by_id(&state.db, id)
         .await?
         .ok_or(ApiError::NotFound)?;
@@ -404,20 +435,17 @@ pub async fn update_video(
     if channel.user_id != claims.sub {
         return Err(ApiError::Forbidden);
     }
-    // Build the updated row (only overwrite fields that were provided).
-    let updated_row = {
-        let mut r = row;
-        if let Some(t) = body.title {
-            r.title = t;
-        }
-        if body.description.is_some() {
-            r.description = body.description;
-        }
-        if let Some(tags) = body.tags {
-            r.tags = tags;
-        }
-        r
-    };
+    // Persist the provided fields (None = leave unchanged).
+    let updated_row = videos::update(
+        &state.db,
+        id,
+        body.title.as_deref(),
+        body.description.as_deref(),
+        body.tags.as_deref(),
+        body.visibility.as_deref(),
+    )
+    .await?
+    .ok_or(ApiError::NotFound)?;
     let video: domain::Video = updated_row.into();
     Ok(Json(serde_json::to_value(&video).unwrap()))
 }
@@ -440,7 +468,13 @@ pub async fn delete_video(
         return Err(ApiError::Forbidden);
     }
     let video: domain::Video = row.into();
-    // Delete the S3 object (video file) and the thumbnail (best-effort).
+    // Remove the DB row first: if it fails we return an error and the video
+    // stays fully intact; if it succeeds, a failed storage delete only leaves
+    // orphaned objects (reported in the response), never a broken listing.
+    videos::delete(&state.db, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    // Delete the S3 objects (video file + thumbnail, best-effort).
     let video_key = video.object_key.clone();
     let thumbnail_key = format!("thumbnails/{}.jpg", video.id);
     let video_deleted = if state.storage.exists(&video_key).await.unwrap_or(false) {

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
-import type { Video } from "@/lib/types";
+import type { Video, VideoVisibility } from "@/lib/types";
 
 interface MeResponse {
   id: string;
@@ -55,7 +55,7 @@ function StudioContent() {
   }, [user]);
 
   const [editing, setEditing] = useState<string | null>(null);
-  const [draft, setDraft] = useState({ title: "", description: "", tags: "" });
+  const [draft, setDraft] = useState({ title: "", description: "", tags: "", visibility: "public" as VideoVisibility });
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -66,6 +66,7 @@ function StudioContent() {
       title: v.title,
       description: v.description ?? "",
       tags: (v.tags ?? []).join(", "),
+      visibility: v.visibility ?? "public",
     });
     setSavedMsg(null);
   };
@@ -87,6 +88,7 @@ function StudioContent() {
           .split(",")
           .map((t) => t.trim())
           .filter(Boolean),
+        visibility: draft.visibility,
       };
       const updated: Video = await apiFetch(`/api/videos/${v.id}`, {
         method: "PATCH",
@@ -244,8 +246,20 @@ function StudioContent() {
                           className="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-ring focus:ring-3 focus:ring-ring/30"
                         />
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Button size="sm" onClick={() => saveEdit(v)} disabled={saving}>
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground">Visibility</label>
+                        <select
+                          value={draft.visibility}
+                          onChange={(e) => setDraft({ ...draft, visibility: e.target.value as VideoVisibility })}
+                          className="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-ring focus:ring-3 focus:ring-ring/30"
+                        >
+                          <option value="public">Public — anyone can find and watch</option>
+                          <option value="unlisted">Unlisted — anyone with the link</option>
+                          <option value="private">Private — only you</option>
+                        </select>
+                      </div>
+                       <div className="flex items-center gap-2">
+                         <Button size="sm" onClick={() => saveEdit(v)} disabled={saving}>
                           {saving ? "Saving…" : "Save changes"}
                         </Button>
                         <Button size="sm" variant="outline" onClick={cancelEdit}>
@@ -257,8 +271,17 @@ function StudioContent() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <h3 className="truncate text-sm font-medium">{v.title}</h3>
-                        <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                          <span>{v.status}</span>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                            <span className={
+                              v.visibility === "private"
+                                ? "font-medium text-amber-500"
+                                : v.visibility === "unlisted"
+                                  ? "font-medium text-blue-500"
+                                  : ""
+                            }>
+                              {v.visibility ?? "public"}
+                            </span>
+                            <span>{v.status}</span>
                           <span>{formatDuration(v.durationSecs)}</span>
                           <span>{v.viewCount.toLocaleString()} views</span>
                           <span>{v.likeCount.toLocaleString()} likes</span>

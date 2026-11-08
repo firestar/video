@@ -16,6 +16,39 @@ pub enum VideoStatus {
     Failed,
 }
 
+/// Who may see a video.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VideoVisibility {
+    /// Visible to everyone, appears in listings and search.
+    #[default]
+    Public,
+    /// Viewable by anyone with the URL; hidden from listings and search.
+    Unlisted,
+    /// Only the channel owner.
+    Private,
+}
+
+impl VideoVisibility {
+    /// Parse an API value; unknown -> None.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "public" => Some(Self::Public),
+            "unlisted" => Some(Self::Unlisted),
+            "private" => Some(Self::Private),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Unlisted => "unlisted",
+            Self::Private => "private",
+        }
+    }
+}
+
 /// A video.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +61,7 @@ pub struct Video {
     pub object_key: String,
     pub tags: Vec<String>,
     pub status: VideoStatus,
+    pub visibility: VideoVisibility,
     pub duration_secs: Option<i32>,
     pub file_size: Option<i64>,
     pub view_count: i64,
@@ -58,6 +92,8 @@ pub struct VideoCreate {
     pub description: Option<String>,
     pub object_key: String,
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub visibility: VideoVisibility,
 }
 
 /// Fields updated by the worker after transcode.
@@ -99,6 +135,7 @@ mod tests {
             object_key: "videos/x".into(),
             tags: vec!["a".into()],
             status: VideoStatus::Pending,
+            visibility: VideoVisibility::Public,
             duration_secs: None,
             file_size: None,
             view_count: 0,
@@ -111,5 +148,7 @@ mod tests {
         assert!(s.contains("\"viewCount\""));
         assert!(s.contains("\"objectKey\""));
         assert!(s.contains("\"tags\""));
+        assert!(s.contains("\"visibility\""));
+        assert!(s.contains("\"public\""));
     }
 }

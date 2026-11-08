@@ -35,7 +35,6 @@ pub fn build_router(state: AppState) -> Router {
             "/api/uploads/presign",
             axum::routing::post(routes::presign_upload),
         )
-        .route("/api/videos/{id}", axum::routing::get(routes::get_video))
         .route(
             "/api/videos/{id}/related",
             axum::routing::get(routes::get_related_videos),
@@ -150,6 +149,20 @@ pub fn build_router(state: AppState) -> Router {
                 .post(routes::create_video_with_auth),
         )
         .with_state(state.clone());
+    // /api/videos/{id}: GET is public but visibility-gated (private videos
+    // are owner-only), so it runs under optional auth; rate-limited like the
+    // other public reads.
+    let video_detail_routes = Router::new()
+        .route(
+            "/api/videos/{id}",
+            axum::routing::get(routes::get_video),
+        )
+        .layer(axum::middleware::from_fn(middleware::rate_limit))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::optional_auth_middleware,
+        ))
+        .with_state(state.clone());
 
     // /api/channels/{id}: GET public (optional auth via lenient middleware),
     // PATCH owner-only (inline auth check in the handler).
@@ -159,11 +172,15 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::get(routes::get_channel)
                 .patch(routes::update_channel_with_auth),
         )
-         .route(
-             "/api/channels/{id}/videos",
-             axum::routing::get(routes::list_channel_videos),
-         )
-         .with_state(state.clone());
+        .route(
+            "/api/channels/{id}/videos",
+            axum::routing::get(routes::list_channel_videos),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::optional_auth_middleware,
+        ))
+        .with_state(state.clone());
 
     // /api/playlists/{id}: GET public when the playlist is public, or for the
     // owner. Uses optional auth so anonymous users can open public playlists.
@@ -182,6 +199,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(public_routes)
         .merge(protected_routes)
         .merge(videos_routes)
+        .merge(video_detail_routes)
         .merge(channel_routes)
         .merge(playlist_detail_routes)
         .layer(cors)

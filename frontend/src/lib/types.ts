@@ -16,6 +16,8 @@ export interface Channel {
   createdAt: string;
 }
 
+export type VideoVisibility = "public" | "unlisted" | "private";
+
 export interface Video {
   id: string;
   channelId: string;
@@ -25,6 +27,7 @@ export interface Video {
   objectKey: string;
   tags: string[];
   status: "pending" | "processing" | "ready" | "failed";
+  visibility?: VideoVisibility;
   durationSecs?: number;
   fileSize?: number;
   viewCount: number;
