@@ -362,11 +362,20 @@ pub async fn get_video(
         None
     };
 
+    let (has_liked, has_disliked) = match claims {
+        Some(Extension(c)) => (
+            likes::has_liked(&state.db, c.sub, id).await.unwrap_or(false),
+            likes::has_disliked(&state.db, c.sub, id).await.unwrap_or(false),
+        ),
+        None => (false, false),
+    };
     Ok(Json(serde_json::json!({
         "video": serde_json::to_value(&video).unwrap(),
         "channel": channel,
         "streamUrl": stream_url,
         "streams": streams_value,
+        "hasLiked": has_liked,
+        "hasDisliked": has_disliked,
         "thumbnailUrl": thumbnail_url.map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
     })))
 }
@@ -1002,6 +1011,25 @@ pub async fn unlike_video(
     let _ = likes::unlike(&state.db, claims.sub, id, None).await?;
     Ok(StatusCode::NO_CONTENT)
 }
+ /// POST /api/videos/{id}/dislike
+ pub async fn dislike_video(
+     State(state): State<AppState>,
+     Extension(claims): Extension<JwtClaims>,
+     Path(id): Path<Uuid>,
+ ) -> Result<StatusCode, ApiError> {
+     let _ = likes::dislike(&state.db, claims.sub, id).await?;
+     Ok(StatusCode::NO_CONTENT)
+ }
+ 
+ /// DELETE /api/videos/{id}/dislike
+ pub async fn undislike_video(
+     State(state): State<AppState>,
+     Extension(claims): Extension<JwtClaims>,
+     Path(id): Path<Uuid>,
+ ) -> Result<StatusCode, ApiError> {
+     let _ = likes::undislike(&state.db, claims.sub, id).await?;
+     Ok(StatusCode::NO_CONTENT)
+ }
 
 /// POST /api/videos/{id}/view — record a view.
 pub async fn record_view(

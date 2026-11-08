@@ -66,6 +66,7 @@ pub struct Video {
     pub file_size: Option<i64>,
     pub view_count: i64,
     pub like_count: i64,
+    pub dislike_count: i64,
     pub published_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
@@ -140,6 +141,7 @@ mod tests {
             file_size: None,
             view_count: 0,
             like_count: 0,
+            dislike_count: 0,
             published_at: None,
             created_at: Utc::now(),
         };

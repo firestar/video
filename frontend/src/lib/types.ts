@@ -33,6 +33,7 @@ export interface Video {
   viewCount: number;
   likeCount: number;
   publishedAt?: string;
+  dislikeCount?: number;
   createdAt: string;
   /** Joined by GET /api/videos (list) — may be null. */
   channel?: Channel;

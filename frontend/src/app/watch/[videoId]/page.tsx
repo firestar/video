@@ -27,6 +27,8 @@ interface WatchData {
   channel: Video["channel"];
   streamUrl: string | null;
   streams: Stream[];
+  hasLiked?: boolean;
+  hasDisliked?: boolean;
 }
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
@@ -42,6 +44,7 @@ function WatchContent() {
   const [liked, setLiked] = useState(false);
   const [disliked, setDisliked] = useState(false);
   const [likeCount, setLikeCount] = useState(0);
+  const [dislikeCount, setDislikeCount] = useState(0);
   const [viewCount, setViewCount] = useState(0);
   const [subscribed, setSubscribed] = useState(false);
 
@@ -143,6 +146,9 @@ function WatchContent() {
       .then((d) => {
         setData(d);
         setLikeCount(d.video.likeCount ?? 0);
+        setDislikeCount(d.video.dislikeCount ?? 0);
+        setLiked(d.hasLiked ?? false);
+        setDisliked(d.hasDisliked ?? false);
         setViewCount(d.video.viewCount ?? 0);
         if (!viewedRef.current && getToken()) {
           viewedRef.current = true;
@@ -249,11 +255,18 @@ function WatchContent() {
   }, []);
   const toggleLike = useCallback(async () => {
     const next = !liked;
-    const prevCount = likeCount;
+    const prevLike = likeCount;
+    const prevDislike = dislikeCount;
     setLiked(next);
     setDisliked(false);
-    setLikeCount(next ? prevCount + 1 : prevCount - 1);
-    if (!getToken()) return;
+    setLikeCount(next ? prevLike + 1 : Math.max(0, prevLike - 1));
+    if (disliked) setDislikeCount(Math.max(0, prevDislike - 1));
+    if (!getToken()) {
+      setLiked(!next);
+      setLikeCount(prevLike);
+      setDislikeCount(prevDislike);
+      return;
+    }
     try {
       if (next) {
         await apiFetch(`/api/videos/${videoId}/like`, { method: "POST" });
@@ -262,24 +275,39 @@ function WatchContent() {
       }
     } catch {
       setLiked(!next);
-      setDisliked(false);
-      setLikeCount(prevCount);
+      setDisliked(disliked);
+      setLikeCount(prevLike);
+      setDislikeCount(prevDislike);
     }
-  }, [liked, likeCount, videoId]);
+  }, [liked, disliked, likeCount, dislikeCount, videoId]);
 
   const toggleDislike = useCallback(async () => {
     const next = !disliked;
+    const prevLike = likeCount;
+    const prevDislike = dislikeCount;
     setDisliked(next);
     setLiked(false);
-    if (!getToken() || !liked) return;
+    setDislikeCount(next ? prevDislike + 1 : Math.max(0, prevDislike - 1));
+    if (liked) setLikeCount(Math.max(0, prevLike - 1));
+    if (!getToken()) {
+      setDisliked(!next);
+      setDislikeCount(prevDislike);
+      setLikeCount(prevLike);
+      return;
+    }
     try {
-      await apiFetch(`/api/videos/${videoId}/like`, { method: "DELETE" });
-      setLikeCount((c) => Math.max(0, c - 1));
+      if (next) {
+        await apiFetch(`/api/videos/${videoId}/dislike`, { method: "POST" });
+      } else {
+        await apiFetch(`/api/videos/${videoId}/dislike`, { method: "DELETE" });
+      }
     } catch {
       setDisliked(!next);
-      setLiked(true);
+      setLiked(liked);
+      setLikeCount(prevLike);
+      setDislikeCount(prevDislike);
     }
-  }, [disliked, liked, videoId]);
+  }, [disliked, liked, likeCount, dislikeCount, videoId]);
 
   const toggleSubscribe = useCallback(() => {
     if (!user) {
@@ -508,6 +536,7 @@ function WatchContent() {
                   }`}
                 >
                   <ThumbsDown className="size-4" />
+                  <span className="tabular-nums">{formatCount(dislikeCount)}</span>
                 </button>
               </div>
               <button

@@ -84,6 +84,14 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::delete(routes::unlike_video),
         )
         .route(
+            "/api/videos/{id}/dislike",
+            axum::routing::post(routes::dislike_video),
+        )
+        .route(
+            "/api/videos/{id}/dislike",
+            axum::routing::delete(routes::undislike_video),
+        )
+        .route(
             "/api/videos/{id}/view",
             axum::routing::post(routes::record_view),
         )

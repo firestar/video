@@ -12,6 +12,8 @@ pub struct Like {
     pub user_id: Uuid,
     pub video_id: Uuid,
     pub comment_id: Option<Uuid>,
+    /// "like" or "dislike" (dislike only exists for video-level likes).
+    pub kind: String,
     pub created_at: DateTime<Utc>,
 }
 
@@ -26,6 +28,7 @@ mod tests {
             user_id: Uuid::new_v4(),
             video_id: Uuid::new_v4(),
             comment_id: None,
+            kind: "like".into(),
             created_at: Utc::now(),
         };
         let j = serde_json::to_string(&l).unwrap();

@@ -22,6 +22,7 @@ pub struct VideoRow {
     pub file_size: Option<i64>,
     pub view_count: i64,
     pub like_count: i64,
+    pub dislike_count: i64,
     pub published_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// Multi-quality transcode variants (worker-written), e.g.
@@ -67,6 +68,7 @@ impl From<VideoRow> for Video {
             file_size: r.file_size,
             view_count: r.view_count,
             like_count: r.like_count,
+            dislike_count: r.dislike_count,
             published_at: r.published_at,
             created_at: r.created_at,
         }
