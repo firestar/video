@@ -5,7 +5,7 @@ use axum::{Extension, Json};
 use uuid::Uuid;
 
 use auth::encode_token;
-use db::{channels, comments, history, likes, subscriptions, users, videos};
+use db::{channels, comments, history, likes, notifications, subscriptions, users, videos};
 use domain::{
     CommentCreate, HistoryQuery, JwtClaims, LoginRequest, RegisterRequest,
     SubscribeRequest, TokenResponse, User, Video, VideoCreate, VideoStatus,
@@ -1059,6 +1059,62 @@ pub async fn list_subscriptions(
         }));
     }
     Ok(Json(serde_json::to_value(out).unwrap()))
+}
+
+// ---------- Notifications ----------
+
+/// GET /api/notifications — the user's latest notifications (newest first)
+/// plus the unread count.
+pub async fn list_notifications(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let rows = notifications::list_for_user(&state.db, claims.sub, 30).await?;
+    let unread = notifications::unread_count(&state.db, claims.sub).await?;
+    let items: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|n| {
+            serde_json::json!({
+                "id": n.id,
+                "channelId": n.channel_id,
+                "videoId": n.video_id,
+                "type": n.r#type,
+                "readAt": n.read_at,
+                "createdAt": n.created_at,
+                "channelName": n.channel_name,
+                "channelAvatarUrl": n.channel_avatar_url,
+                "videoTitle": n.video_title,
+                "videoThumbnailUrl": n.video_thumbnail_url,
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({
+        "notifications": items,
+        "unreadCount": unread,
+    })))
+}
+
+/// POST /api/notifications/{id}/read — mark one notification read.
+pub async fn mark_notification_read(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let updated = notifications::mark_read(&state.db, id, claims.sub).await?;
+    if !updated {
+        return Err(ApiError::NotFound);
+    }
+    let unread = notifications::unread_count(&state.db, claims.sub).await?;
+    Ok(Json(serde_json::json!({ "unreadCount": unread })))
+}
+
+/// POST /api/notifications/read-all — mark every notification read.
+pub async fn mark_all_notifications_read(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    notifications::mark_all_read(&state.db, claims.sub).await?;
+    Ok(Json(serde_json::json!({ "unreadCount": 0 })))
 }
 
 

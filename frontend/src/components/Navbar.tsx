@@ -7,6 +7,7 @@ import { Menu, Moon, Search, Sun, Upload } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
 import { useSidebarState } from "./SidebarState";
+import NotificationsBell from "./NotificationsBell";
 
 export default function Navbar() {
   const { user, logout } = useAuth();
@@ -93,6 +94,7 @@ export default function Navbar() {
         >
           {theme === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />}
         </button>
+        <NotificationsBell />
 
         <Link href="/upload" className="hidden sm:block">
           <Button size="sm">

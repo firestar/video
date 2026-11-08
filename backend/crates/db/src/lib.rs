@@ -3,6 +3,7 @@
 pub mod channels;
 pub mod comments;
 pub mod history;
+pub mod notifications;
 pub mod likes;
 pub mod pool;
 pub mod subscriptions;

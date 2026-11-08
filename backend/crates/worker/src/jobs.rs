@@ -235,7 +235,7 @@ async fn process_once(state: &WorkerState, job: &TranscodeJob) -> anyhow::Result
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    videos::finalize(
+    let row = videos::finalize(
         &state.db,
         video_id,
         VideoStatus::Ready,
@@ -247,6 +247,14 @@ async fn process_once(state: &WorkerState, job: &TranscodeJob) -> anyhow::Result
     )
     .await
     .map_err(|e| anyhow::anyhow!("db finalize: {e}"))?;
+
+    // Fan out a new-upload notification to the channel's subscribers.
+    // Best-effort: a notification failure never fails a finished transcode.
+    if let Some(row) = row {
+        if let Err(e) = db::notifications::notify_new_uploads(&state.db, row.channel_id, video_id).await {
+            warn!(video_id = %video_id, error = %e, "failed to notify subscribers");
+        }
+    }
 
     info!(
         video_id = %video_id,

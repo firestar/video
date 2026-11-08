@@ -104,6 +104,18 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::patch(routes::update_video)
                 .delete(routes::delete_video),
         )
+        .route(
+            "/api/notifications",
+            axum::routing::get(routes::list_notifications),
+        )
+        .route(
+            "/api/notifications/read-all",
+            axum::routing::post(routes::mark_all_notifications_read),
+        )
+        .route(
+            "/api/notifications/{id}/read",
+            axum::routing::post(routes::mark_notification_read),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::auth_middleware,
