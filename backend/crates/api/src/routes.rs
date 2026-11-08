@@ -653,7 +653,7 @@ pub async fn presign_upload(
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(|s| s.to_string())
         .ok_or(ApiError::Unauthorized("missing token".into()))?;
-    let _claims = auth::decode_token(&state.config.jwt_secret, &token)
+    let claims = auth::decode_token(&state.config.jwt_secret, &token)
         .map_err(|e| ApiError::Unauthorized(e.to_string()))?;
     let body: axum::body::Bytes = axum::body::to_bytes(req.into_body(), usize::MAX)
         .await
@@ -710,6 +710,35 @@ pub async fn presign_upload(
                 ));
             }
             format!("banners/{}.jpg", Uuid::new_v4())
+        }
+        "thumbnail" => {
+            if size > 5 * 1024 * 1024 {
+                return Err(ApiError::BadRequest("thumbnail max 5 MB".into()));
+            }
+            if !matches!(
+                content_type,
+                Some("image/jpeg") | Some("image/png") | Some("image/webp")
+            ) {
+                return Err(ApiError::BadRequest(
+                    "thumbnail must be image/jpeg, image/png or image/webp".into(),
+                ));
+            }
+            let video_id = req
+                .get("videoId")
+                .and_then(|v| v.as_str())
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .ok_or_else(|| ApiError::BadRequest("videoId required".into()))?;
+            // Ownership: the video's channel must belong to the current user.
+            let vrow = videos::find_by_id(&state.db, video_id)
+                .await?
+                .ok_or(ApiError::NotFound)?;
+            let ch = channels::find_by_id(&state.db, vrow.channel_id)
+                .await?
+                .ok_or(ApiError::NotFound)?;
+            if ch.user_id != claims.sub {
+                return Err(ApiError::Forbidden);
+            }
+            format!("thumbnails/{}.jpg", video_id)
         }
         _ => format!("videos/{}", Uuid::new_v4()),
     };
