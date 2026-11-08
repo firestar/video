@@ -71,3 +71,21 @@ export interface FeedResponse {
   videos: Video[];
   reasons: Record<string, string>;
 }
+
+/** A user-owned playlist. */
+export interface Playlist {
+  id: string;
+  userId: string;
+  title: string;
+  description: string;
+  isPublic: boolean;
+  createdAt: string;
+  updatedAt: string;
+  videoCount: number;
+}
+
+/** GET /api/playlists/{id} response. */
+export interface PlaylistDetail {
+  playlist: Playlist;
+  videos: Video[];
+}

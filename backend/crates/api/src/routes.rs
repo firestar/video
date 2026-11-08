@@ -5,10 +5,11 @@ use axum::{Extension, Json};
 use uuid::Uuid;
 
 use auth::encode_token;
-use db::{channels, comments, history, likes, notifications, subscriptions, users, videos};
+use db::{channels, comments, history, likes, notifications, playlists, subscriptions, users, videos};
 use domain::{
-    CommentCreate, HistoryQuery, JwtClaims, LoginRequest, RegisterRequest,
-    SubscribeRequest, TokenResponse, User, Video, VideoCreate, VideoStatus,
+    CommentCreate, HistoryQuery, JwtClaims, LoginRequest, PlaylistCreate, PlaylistItemAdd,
+    PlaylistUpdate, RegisterRequest, SubscribeRequest, TokenResponse, User, Video, VideoCreate,
+    VideoStatus,
 };
 
 use crate::error::ApiError;
@@ -1169,4 +1170,151 @@ pub async fn mark_all_notifications_read(
     Ok(Json(serde_json::json!({ "unreadCount": 0 })))
 }
 
+// ---------- Playlist routes ----------
 
+/// POST /api/playlists — create a playlist.
+pub async fn create_playlist(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Json(req): Json<PlaylistCreate>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let title = req.title.trim();
+    if title.is_empty() {
+        return Err(ApiError::BadRequest("title is required".into()));
+    }
+    let row = playlists::create(
+        &state.db,
+        claims.sub,
+        title,
+        req.description.as_deref().unwrap_or(""),
+        req.is_public.unwrap_or(false),
+    )
+    .await?;
+    let p: domain::Playlist = row.into();
+    Ok(Json(serde_json::to_value(&p).unwrap()))
+}
+
+/// GET /api/playlists — the user's playlists, newest first.
+pub async fn list_playlists(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let rows = playlists::list_for_user(&state.db, claims.sub).await?;
+    let items: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|r| serde_json::to_value(domain::Playlist::from(r)).unwrap())
+        .collect();
+    Ok(Json(serde_json::json!({ "playlists": items })))
+}
+
+/// GET /api/playlists/{id} — playlist + its videos. Public when the playlist is
+/// public, otherwise owner-only. Videos carry signed stream URLs + channel.
+pub async fn get_playlist(
+    State(state): State<AppState>,
+    claims: Option<Extension<JwtClaims>>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let row = playlists::find_by_id(&state.db, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let is_owner = match &claims {
+        Some(Extension(c)) => c.sub == row.user_id,
+        None => false,
+    };
+    if !row.is_public && !is_owner {
+        return Err(ApiError::NotFound);
+    }
+    let p: domain::Playlist = row.clone().into();
+
+    let video_ids = playlists::video_ids(&state.db, id).await?;
+    let video_rows = videos::find_by_id_all(&state.db, &video_ids).await?;
+    // Keep position order (find_by_id_all returns in input order).
+    let videos_json = videos_with_channels(&state.db, &state.storage, &video_rows).await?;
+
+    Ok(Json(serde_json::json!({
+        "playlist": serde_json::to_value(&p).unwrap(),
+        "videos": videos_json,
+    })))
+}
+
+/// PATCH /api/playlists/{id} — update title/description/visibility (owner).
+pub async fn update_playlist(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PlaylistUpdate>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let title = req.title.as_deref().map(str::trim);
+    if let Some(t) = title {
+        if t.is_empty() {
+            return Err(ApiError::BadRequest("title cannot be empty".into()));
+        }
+    }
+    let row = playlists::update(
+        &state.db,
+        id,
+        claims.sub,
+        title,
+        req.description.as_deref(),
+        req.is_public,
+    )
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    // Re-fetch with the video count.
+    let full = playlists::find_by_id(&state.db, id).await?;
+    let p: domain::Playlist = full.unwrap_or(row).into();
+    Ok(Json(serde_json::to_value(&p).unwrap()))
+}
+
+/// DELETE /api/playlists/{id} — delete a playlist (owner).
+pub async fn delete_playlist(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let deleted = playlists::delete(&state.db, id, claims.sub).await?;
+    if !deleted {
+        return Err(ApiError::NotFound);
+    }
+    Ok(Json(serde_json::json!({ "deleted": true })))
+}
+
+/// POST /api/playlists/{id}/items — add a video to a playlist (owner).
+pub async fn add_playlist_item(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PlaylistItemAdd>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // The video must exist.
+    if videos::find_by_id(&state.db, req.video_id).await?.is_none() {
+        return Err(ApiError::NotFound);
+    }
+    let added = playlists::add_item(&state.db, id, claims.sub, req.video_id).await?;
+    if !added && !playlists::has_item(&state.db, id, req.video_id).await? {
+        // Not added and not already present → playlist not found / not owner.
+        return Err(ApiError::NotFound);
+    }
+    let count = playlists::find_by_id(&state.db, id).await?.map(|r| r.video_count).unwrap_or(0);
+    Ok(Json(serde_json::json!({
+        "added": added,
+        "videoCount": count,
+    })))
+}
+
+/// DELETE /api/playlists/{id}/items/{videoId} — remove a video (owner).
+pub async fn remove_playlist_item(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Path((id, video_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let removed = playlists::remove_item(&state.db, id, claims.sub, video_id).await?;
+    if !removed && !playlists::is_owner(&state.db, id, claims.sub).await? {
+        return Err(ApiError::NotFound);
+    }
+    let count = playlists::find_by_id(&state.db, id).await?.map(|r| r.video_count).unwrap_or(0);
+    Ok(Json(serde_json::json!({
+        "removed": removed,
+        "videoCount": count,
+    })))
+}

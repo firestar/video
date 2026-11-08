@@ -7,10 +7,10 @@ import { Button } from "@/components/ui/button";
 import { formatCount, formatDate } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import CommentSection from "@/components/CommentSection";
-import { Bell, BellOff, ThumbsUp, ThumbsDown, SlidersHorizontal, Check } from "lucide-react";
+import { Bell, BellOff, ThumbsUp, ThumbsDown, SlidersHorizontal, Check, ListVideo, Plus } from "lucide-react";
 import RelatedVideos from "@/components/RelatedVideos";
 import { WatchPageSkeleton } from "@/components/Skeletons";
-import type { Video } from "@/lib/types";
+import type { Video, Playlist } from "@/lib/types";
 
 interface Stream {
   quality: string;
@@ -44,6 +44,53 @@ function WatchContent() {
 
   const [subHint, setSubHint] = useState<string | null>(null);
 
+  const [playlistMenuOpen, setPlaylistMenuOpen] = useState(false);
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [addedTo, setAddedTo] = useState<Set<string>>(new Set());
+  const [playlistBusy, setPlaylistBusy] = useState(false);
+
+  const loadPlaylists = useCallback(async () => {
+    if (!getToken()) return;
+    try {
+      const data = await apiFetch<{ playlists: Playlist[] }>("/api/playlists");
+      setPlaylists(data.playlists);
+    } catch {
+      setPlaylists([]);
+    }
+  }, []);
+
+  const openPlaylistMenu = useCallback(() => {
+    if (!getToken()) {
+      window.location.href = "/login";
+      return;
+    }
+    setPlaylistMenuOpen((o) => {
+      const next = !o;
+      if (next) loadPlaylists();
+      return next;
+    });
+  }, [loadPlaylists]);
+
+  const addToPlaylist = useCallback(
+    async (playlistId: string) => {
+      if (!videoId) return;
+      setPlaylistBusy(true);
+      try {
+        const res = await apiFetch<{ added: boolean }>(
+          `/api/playlists/${playlistId}/items`,
+          { method: "POST", body: JSON.stringify({ videoId }) }
+        );
+        if (res.added) {
+          setAddedTo((s) => new Set(s).add(playlistId));
+        }
+      } catch {
+        // ignore; menu stays open
+      } finally {
+        setPlaylistBusy(false);
+      }
+    },
+    [videoId]
+  );
   const [quality, setQuality] = useState<string | null>(null);
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
   const pendingTimeRef = useRef<number | null>(null);
@@ -329,6 +376,50 @@ function WatchContent() {
                 >
                   <ThumbsDown className="size-4" />
                 </button>
+              </div>
+              <div className="relative">
+                <button
+                  onClick={openPlaylistMenu}
+                  className="flex h-9 items-center gap-2 rounded-full border border-border pl-4 pr-3 text-sm text-muted-foreground hover:bg-muted"
+                >
+                  <ListVideo className="size-4" />
+                  Save
+                </button>
+                {playlistMenuOpen && (
+                  <div className="absolute right-0 top-11 z-20 w-64 overflow-hidden rounded-lg border border-border bg-background shadow-lg">
+                    <div className="border-b border-border px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Save to playlist
+                    </div>
+                    {playlists.length === 0 ? (
+                      <div className="px-3 py-3 text-sm text-muted-foreground">
+                        No playlists yet.
+                      </div>
+                    ) : (
+                      <ul className="max-h-64 overflow-y-auto py-1">
+                        {playlists.map((p) => {
+                          const added = addedTo.has(p.id);
+                          return (
+                            <li key={p.id}>
+                              <button
+                                onClick={() => addToPlaylist(p.id)}
+                                disabled={added || playlistBusy}
+                                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted disabled:cursor-default"
+                              >
+                                <ListVideo className="size-4 shrink-0 text-muted-foreground" />
+                                <span className="min-w-0 flex-1 truncate">{p.title}</span>
+                                {added ? (
+                                  <Check className="size-4 shrink-0 text-foreground" />
+                                ) : (
+                                  <Plus className="size-4 shrink-0 text-muted-foreground" />
+                                )}
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="ml-2 text-sm text-muted-foreground">
                 {formatCount(viewCount)} views · {formatDate(video.publishedAt ?? video.createdAt)}

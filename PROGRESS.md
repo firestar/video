@@ -38,26 +38,31 @@
    - Watch page: quality menu button (shows current quality) → dropdown of available qualities; switching swaps `src` and restores `currentTime`; falls back to single `streamUrl` when no `streams` (old videos)
    - **Shipped live** (commit `b845ccd`, deployed 06:37–06:39 UTC): live E2E verified — upload 720p source → 3 variants (1280×720/854×480/640×360) in ~3s, signed stream URLs, `object_key` = top quality
    - Root cause of the 06:04 queue failure: stale `sourceKey`/`outputPrefix` payload format from before the multi-quality rework; worker + smoke script on disk were already on `videoId`/`objectKey`
- - **Comments fix**: `POST /api/videos/{id}/comments` was registered on the PUBLIC router but its handler requires the `JwtClaims` extension that only `auth_middleware` injects on protected routes → every comment creation returned 500. Moved the route to the protected router (commit `8a13a27`, deployed 07:35 UTC). Live-verified: POST → 201, comment appears in `GET /api/comments/{videoId}` with author joined
-  - **Notifications (shipped live, commit `a60b8df`, deployed 07:55–07:57 UTC)**:
+  - **Comments fix (shipped live, commit `8a13a27`, deployed 09:28–09:35 UTC)**:
+    - `POST /api/videos/{id}/comments` was registered on the PUBLIC router but its handler requires the `JwtClaims` extension that only `auth_middleware` injects on protected routes → every comment creation returned 500. Moved the route to the protected router.
+    - **Live-verified in browser on the deployed build**: display (top-level + nested replies), post from UI, threaded reply, like (API + UI), delete (API 204 + UI). Test data cleaned up.
+  - **Notifications (shipped live, commit `a60b8df`, deployed 09:28–09:35 UTC)**:
     - Migration `006_notifications.sql`: notifications table (user, channel, video, type, read_at) + per-user indexes
     - db crate `notifications.rs`: `notify_new_uploads` (fan-out to subscribers, excludes owner), `list_for_user` (joined channel name/avatar + video title/thumbnail), `unread_count`, `mark_read`, `mark_all_read`
     - Worker: after a video finalizes `ready`, fan out `new_upload` notifications (best-effort — never fails a finished transcode)
     - API (protected): `GET /api/notifications`, `POST /api/notifications/read-all`, `POST /api/notifications/{id}/read`
     - Frontend: `NotificationsBell.tsx` in Navbar — bell with unread badge, 30s polling, dropdown (channel avatar + video title + relative time), click marks read + opens video, mark-all-as-read
     - Live E2E verified (`e2e-live-notifications.sh`): subscribe → upload → subscriber gets 1 notification, owner gets none, mark-read → unreadCount 0; dropdown screenshot-verified in browser
-  - **Channel avatar + banner upload (in flight)**:
+  - **Channel avatar + banner upload (shipped live, commit `a33df54`, deployed 09:28–09:35 UTC)**:
     - `presign_upload` accepts `purpose`: `avatar` (≤5MB, image only, `avatars/<uuid>.jpg`), `banner` (≤10MB, image only, `banners/<uuid>.jpg`), default `video`
     - `users::update_avatar` db fn; `ChannelUpdateBody.avatar_url`; `PATCH /api/channels/{id}` sets the user's avatar
     - `GET /api/channels/{id}` + PATCH response now include `channel.avatarUrl` (was missing — frontend read it but backend never sent it)
     - Frontend: `ChannelEditor.tsx` (owner-only "Edit channel" on the channel page): name, description, avatar + banner file pickers with previews; presign → PUT → PATCH with public `/media/` URL; `mediaUrl()` helper in `lib/api.ts`
-  
-  ## In flight
-  - [ ] Channel avatar + banner upload: build, test, commit, push, live-verify (presign purpose + PATCH + channel page render)
-  - [ ] Add playlist / watch-next queue
- ## In flight
- - [ ] Notifications: wait for Kaiad build of `a60b8df` (backend + worker + frontend), then live E2E: subscribe → upload → notification appears → mark read → unreadCount 0
- - [ ] Add playlist / watch-next queue
+   - **Channel avatar on watch page (shipped live, commit `fd10729`, deployed 09:35 UTC)**: watch page shows the channel's avatar (or fallback initial) next to the channel name.
+   - **Playlists (in progress — backend + frontend built, tests green, pending deploy)**:
+     - Migration `007_playlists.sql`: `playlists` (owner, title, description, is_public, counts) + `playlist_items` (ordered, unique per video) + indexes
+     - db crate `playlists.rs`: create/list/update/delete, `add_item` (idempotent, auto position), `remove_item`, `list_items` (joined ready videos), `count_videos`, `exists`, `is_owner`
+     - API: `GET/POST /api/playlists` (protected), `GET /api/playlists/{id}` (public, optional auth → `isOwner`), `PATCH/DELETE /api/playlists/{id}` (owner), `POST/DELETE /api/playlists/{id}/items[/{videoId}]` (owner)
+     - Frontend: `/playlists` (list + create form), `/playlists/{id}` (detail: edit/delete, remove video, video grid), "Save to playlist" button on watch page (dropdown of playlists, check on added), Sidebar "Playlists" link
+     - `cargo test --workspace` (40 tests incl. 2 new playlist) green; `tsc --noEmit` + `next build` green
+
+   ## In flight
+   - [ ] Watch-next queue (add to queue, play in order)
 
 ## Key Files
 - `backend/crates/api/src/routes.rs` — all API handlers
@@ -65,7 +70,10 @@
 - `backend/crates/api/src/state.rs` — `AppState` with `storage` field
 - `backend/crates/worker/src/jobs.rs` — multi-quality transcode pipeline, thumbnail, key format `videos/{id}_{quality}.mp4`, notification fan-out after ready
 - `backend/crates/db/src/notifications.rs` — notification queries (fan-out, list, unread, mark read)
-- `frontend/src/components/NotificationsBell.tsx` — navbar bell + dropdown
+ - `frontend/src/app/watch/[videoId]/page.tsx` — quality menu + "Save to playlist" button
+ - `backend/crates/db/src/playlists.rs` — playlist queries (CRUD, items, counts)
+ - `backend/crates/db/migrations/007_playlists.sql` — playlists + playlist_items tables
+ - `frontend/src/app/playlists/` — playlist list + detail pages
 - `frontend/src/components/ChannelEditor.tsx` — owner channel editor (name/description/avatar/banner)
 - `e2e-live-notifications.sh` — live notifications E2E (gitignored like all *.sh)
 - `backend/crates/db/src/videos.rs` — `finalize` takes `streams` + updates `object_key`

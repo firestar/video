@@ -112,10 +112,28 @@ pub fn build_router(state: AppState) -> Router {
             "/api/notifications/read-all",
             axum::routing::post(routes::mark_all_notifications_read),
         )
-        .route(
-            "/api/notifications/{id}/read",
-            axum::routing::post(routes::mark_notification_read),
-        )
+         .route(
+             "/api/notifications/{id}/read",
+             axum::routing::post(routes::mark_notification_read),
+         )
+         .route(
+             "/api/playlists",
+             axum::routing::get(routes::list_playlists)
+                 .post(routes::create_playlist),
+         )
+         .route(
+             "/api/playlists/{id}",
+             axum::routing::patch(routes::update_playlist)
+                 .delete(routes::delete_playlist),
+         )
+         .route(
+             "/api/playlists/{id}/items",
+             axum::routing::post(routes::add_playlist_item),
+         )
+         .route(
+             "/api/playlists/{id}/items/{videoId}",
+             axum::routing::delete(routes::remove_playlist_item),
+         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::auth_middleware,
@@ -145,6 +163,15 @@ pub fn build_router(state: AppState) -> Router {
              "/api/channels/{id}/videos",
              axum::routing::get(routes::list_channel_videos),
          )
+         .with_state(state.clone());
+
+    // /api/playlists/{id}: GET public when the playlist is public, or for the
+    // owner. Uses optional auth so anonymous users can open public playlists.
+    let playlist_detail_routes = Router::new()
+        .route(
+            "/api/playlists/{id}",
+            axum::routing::get(routes::get_playlist),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::optional_auth_middleware,
@@ -156,8 +183,10 @@ pub fn build_router(state: AppState) -> Router {
         .merge(protected_routes)
         .merge(videos_routes)
         .merge(channel_routes)
+        .merge(playlist_detail_routes)
         .layer(cors)
         .layer(TraceLayer::new_for_http())
+
 }
 
 /// Run the server. Blocks until shutdown.

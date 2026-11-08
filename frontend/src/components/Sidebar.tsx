@@ -16,6 +16,7 @@ const links = [
   { href: "/trending", label: "Trending" },
   { href: "/subscriptions", label: "Subscriptions" },
   { href: "/history", label: "History" },
+  { href: "/playlists", label: "Playlists" },
 ];
 
 const studioLink = { href: "/studio", label: "Studio" };

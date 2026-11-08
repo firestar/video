@@ -6,6 +6,7 @@ pub mod history;
 pub mod notifications;
 pub mod likes;
 pub mod pool;
+pub mod playlists;
 pub mod subscriptions;
 pub mod users;
 pub mod videos;
