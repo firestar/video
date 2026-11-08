@@ -279,7 +279,12 @@ function WatchContent() {
             <div className="flex items-center gap-3">
               <a href={`/channel/${channel?.id ?? ""}`} className="shrink-0">
                 <Avatar size="lg" className="size-10">
-                  <AvatarFallback>{(channel?.name ?? "?").charAt(0).toUpperCase()}</AvatarFallback>
+                  {channel?.avatarUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={channel.avatarUrl} alt={channel.name} className="size-full rounded-full object-cover" />
+                  ) : (
+                    <AvatarFallback>{(channel?.name ?? "?").charAt(0).toUpperCase()}</AvatarFallback>
+                  )}
                 </Avatar>
               </a>
               <div>
