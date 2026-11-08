@@ -1,6 +1,6 @@
 "use client";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { apiFetch, getToken } from "@/lib/api";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,8 @@ import { useAuth } from "@/lib/auth";
 import CommentSection from "@/components/CommentSection";
 import { Bell, BellOff, ThumbsUp, ThumbsDown, SlidersHorizontal, Check, ListVideo, Plus } from "lucide-react";
 import RelatedVideos from "@/components/RelatedVideos";
+import WatchQueue from "@/components/WatchQueue";
+import { useWatchQueue, WatchQueueProvider } from "@/lib/watch-queue";
 import { WatchPageSkeleton } from "@/components/Skeletons";
 import type { Video, Playlist } from "@/lib/types";
 
@@ -98,7 +100,6 @@ function WatchContent() {
   const viewedRef = useRef(false);
   const historySentRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement>(null);
-
   const recordHistory = useCallback(() => {
     if (historySentRef.current || !videoId || !getToken()) return;
     historySentRef.current = true;
@@ -109,6 +110,13 @@ function WatchContent() {
       historySentRef.current = false;
     });
   }, [videoId]);
+
+  const router = useRouter();
+  const { shift } = useWatchQueue();
+  const handleEnded = useCallback(() => {
+    const next = shift();
+    if (next) router.push(`/watch/${next.video.id}`);
+  }, [shift, router]);
 
   useEffect(() => {
     if (!videoId) return;
@@ -265,17 +273,10 @@ function WatchContent() {
                 autoPlay
                 muted
                 controls
-                playsInline
-                preload="auto"
-                onLoadedMetadata={(e) => {
-                  if (pendingTimeRef.current != null) {
-                    e.currentTarget.currentTime = pendingTimeRef.current;
-                    pendingTimeRef.current = null;
-                  }
-                }}
                 onTimeUpdate={(e) => {
                   if (e.currentTarget.currentTime > 30) recordHistory();
                 }}
+                onEnded={handleEnded}
                 className="aspect-video w-full rounded-lg bg-black"
               />
               {streams.length > 1 && (
@@ -442,7 +443,8 @@ function WatchContent() {
             </div>
           )}
 
-          <div className="mt-6 lg:hidden">
+          <div className="mt-6 space-y-4 lg:hidden">
+            <WatchQueue currentVideoId={video.id} />
             <RelatedVideos videoId={video.id} />
           </div>
 
@@ -451,7 +453,8 @@ function WatchContent() {
           </div>
         </div>
 
-        <aside className="hidden w-[400px] shrink-0 lg:block xl:w-[440px]">
+        <aside className="hidden w-[400px] shrink-0 space-y-4 lg:block xl:w-[440px]">
+          <WatchQueue currentVideoId={video.id} />
           <RelatedVideos videoId={video.id} />
         </aside>
       </div>
@@ -461,8 +464,10 @@ function WatchContent() {
 
 export default function WatchPage() {
   return (
-    <Suspense fallback={<WatchPageSkeleton />}>
-      <WatchContent />
-    </Suspense>
+    <WatchQueueProvider>
+      <Suspense fallback={<WatchPageSkeleton />}>
+        <WatchContent />
+      </Suspense>
+    </WatchQueueProvider>
   );
 }

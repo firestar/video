@@ -54,15 +54,18 @@
     - `GET /api/channels/{id}` + PATCH response now include `channel.avatarUrl` (was missing — frontend read it but backend never sent it)
     - Frontend: `ChannelEditor.tsx` (owner-only "Edit channel" on the channel page): name, description, avatar + banner file pickers with previews; presign → PUT → PATCH with public `/media/` URL; `mediaUrl()` helper in `lib/api.ts`
    - **Channel avatar on watch page (shipped live, commit `fd10729`, deployed 09:35 UTC)**: watch page shows the channel's avatar (or fallback initial) next to the channel name.
-   - **Playlists (in progress — backend + frontend built, tests green, pending deploy)**:
-     - Migration `007_playlists.sql`: `playlists` (owner, title, description, is_public, counts) + `playlist_items` (ordered, unique per video) + indexes
-     - db crate `playlists.rs`: create/list/update/delete, `add_item` (idempotent, auto position), `remove_item`, `list_items` (joined ready videos), `count_videos`, `exists`, `is_owner`
-     - API: `GET/POST /api/playlists` (protected), `GET /api/playlists/{id}` (public, optional auth → `isOwner`), `PATCH/DELETE /api/playlists/{id}` (owner), `POST/DELETE /api/playlists/{id}/items[/{videoId}]` (owner)
-     - Frontend: `/playlists` (list + create form), `/playlists/{id}` (detail: edit/delete, remove video, video grid), "Save to playlist" button on watch page (dropdown of playlists, check on added), Sidebar "Playlists" link
-     - `cargo test --workspace` (40 tests incl. 2 new playlist) green; `tsc --noEmit` + `next build` green
-
-   ## In flight
-   - [ ] Watch-next queue (add to queue, play in order)
+    - **Playlists (shipped live, commit `8e713e8`, deployed 15:58–16:05 UTC)**:
+      - Migration `007_playlists.sql`: `playlists` (owner, title, description, is_public, counts) + `playlist_items` (ordered, unique per video) + indexes
+      - db crate `playlists.rs`: create/list/update/delete, `add_item` (idempotent, auto position), `remove_item`, `list_items` (joined ready videos), `count_videos`, `exists`, `is_owner`
+      - API: `GET/POST /api/playlists` (protected), `GET /api/playlists/{id}` (public, optional auth → `isOwner`; private → owner-only), `PATCH/DELETE /api/playlists/{id}` (owner), `POST/DELETE /api/playlists/{id}/items[/{videoId}]` (owner)
+      - Frontend: `/playlists` (list + create form), `/playlists/{id}` (detail: edit/delete, remove video, video grid), "Save to playlist" button on watch page (dropdown of playlists, check on added), Sidebar "Playlists" link
+      - `cargo test --workspace` (40 tests incl. 2 new playlist) green; `tsc --noEmit` + `next build` green
+      - Live E2E verified (`e2e-playlist.sh`): create → add 2 videos (count 2, idempotent re-add) → list → detail (public) → remove → count 1 → delete; private playlist correctly 404 for anonymous
+    - **Watch-next queue (in progress — frontend built, tsc + next build green, pending deploy)**:
+      - `lib/watch-queue.tsx`: `WatchQueueProvider` context — queue persisted to localStorage (hydrated on mount to avoid SSR mismatch), `addToQueue`/`removeFromQueue`/`shift`/`clear`/`isInQueue`
+      - `components/WatchQueue.tsx`: "Up next (N)" panel — thumbnails, reorder-free, remove + clear, "next up" / "now playing" markers
+      - `RelatedVideos.tsx`: per-card "Add to queue" button (check when queued)
+      - Watch page: `onEnded` → `shift()` → `router.push` next video (auto-advance); provider wraps the page; queue panel in both mobile + desktop columns
 
 ## Key Files
 - `backend/crates/api/src/routes.rs` — all API handlers
@@ -74,6 +77,8 @@
  - `backend/crates/db/src/playlists.rs` — playlist queries (CRUD, items, counts)
  - `backend/crates/db/migrations/007_playlists.sql` — playlists + playlist_items tables
  - `frontend/src/app/playlists/` — playlist list + detail pages
+ - `frontend/src/lib/watch-queue.tsx` — watch-next queue context (localStorage-persisted)
+ - `frontend/src/components/WatchQueue.tsx` — "Up next" queue panel
 - `frontend/src/components/ChannelEditor.tsx` — owner channel editor (name/description/avatar/banner)
 - `e2e-live-notifications.sh` — live notifications E2E (gitignored like all *.sh)
 - `backend/crates/db/src/videos.rs` — `finalize` takes `streams` + updates `object_key`
