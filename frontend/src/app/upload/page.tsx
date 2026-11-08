@@ -36,6 +36,8 @@ export default function UploadPage() {
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState("");
   const [visibility, setVisibility] = useState<VideoVisibility>("public");
+  const [schedule, setSchedule] = useState<"now" | "scheduled">("now");
+  const [publishAt, setPublishAt] = useState("");
 
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0);
@@ -82,6 +84,10 @@ export default function UploadPage() {
 
   const upload = async () => {
     if (!file || !title.trim()) return;
+    if (schedule === "scheduled" && (!publishAt || new Date(publishAt) <= new Date())) {
+      setError("Pick a future date and time to schedule the publish.");
+      return;
+    }
     setError(null);
     setProgress(0);
     try {
@@ -128,6 +134,9 @@ export default function UploadPage() {
             .filter(Boolean),
           object_key: presign.object_key,
           visibility,
+          ...(schedule === "scheduled"
+            ? { publishAt: new Date(publishAt).toISOString() }
+            : {}),
         }),
       });
 
@@ -258,6 +267,49 @@ export default function UploadPage() {
                   </span>
                 </label>
               ))}
+            </div>
+          </div>
+          <div>
+            <p className="mb-2 text-sm font-medium">Publish</p>
+            <div className="flex flex-col gap-2">
+              {(
+                [
+                  ["now", "Publish now", "The video goes live as soon as it finishes processing"],
+                  ["scheduled", "Schedule publish", "Pick a date and time; the video goes live automatically then"],
+                ] as ["now" | "scheduled", string, string][]
+              ).map(([value, label, hint]) => (
+                <label
+                  key={value}
+                  className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm transition-colors ${
+                    schedule === value
+                      ? "border-blue-500 bg-blue-500/10"
+                      : "border-border hover:border-foreground/40"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="schedule"
+                    value={value}
+                    checked={schedule === value}
+                    onChange={() => setSchedule(value)}
+                    disabled={busy}
+                    className="mt-0.5 accent-blue-500"
+                  />
+                  <span>
+                    <span className="font-medium">{label}</span>
+                    <span className="block text-muted-foreground">{hint}</span>
+                  </span>
+                </label>
+              ))}
+              {schedule === "scheduled" && (
+                <Input
+                  type="datetime-local"
+                  value={publishAt}
+                  onChange={(e) => setPublishAt(e.target.value)}
+                  disabled={busy}
+                  className="mt-1 max-w-xs"
+                />
+              )}
             </div>
           </div>
           {phase === "uploading" && (

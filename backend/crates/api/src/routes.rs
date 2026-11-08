@@ -32,6 +32,9 @@ pub struct VideoUpdateBody {
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
     pub visibility: Option<String>,
+    /// Schedule control: absent = unchanged, null = clear schedule (publish
+    /// now if ready), timestamp = set a future schedule.
+    pub publish_at: Option<Option<chrono::DateTime<chrono::Utc>>>,
 }
 
 /// Query params for GET /api/home/feed.
@@ -105,6 +108,17 @@ pub async fn create_video_with_auth(
     let channel_row = channels::find_by_user(&state.db, claims.sub)
         .await?
         .ok_or(ApiError::NotFound)?;
+    let publish_at = match req_json.get("publishAt") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(v) => Some(
+            v.as_str()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .ok_or_else(|| {
+                    ApiError::BadRequest("publishAt must be an RFC3339 timestamp".into())
+                })?,
+        ),
+    };
     let vc = VideoCreate {
         channel_id: channel_row.id,
         title,
@@ -112,6 +126,7 @@ pub async fn create_video_with_auth(
         object_key,
         tags,
         visibility,
+        publish_at,
     };
     let row = videos::create(&state.db, &vc).await?;
     let video: domain::Video = row.into();
@@ -444,6 +459,27 @@ pub async fn update_video(
     if channel.user_id != claims.sub {
         return Err(ApiError::Forbidden);
     }
+    // Publishing now requires a ready video (streams must exist).
+    if body.publish_at == Some(None) && row.status != "ready" {
+        return Err(ApiError::BadRequest(
+            "video is still processing — it will go live once ready".into(),
+        ));
+    }
+    // Schedule: a timestamp sets a future schedule (not allowed once
+    // published); an explicit null clears the schedule and publishes a ready
+    // video immediately.
+    if let Some(Some(t)) = &body.publish_at {
+        if row.published_at.is_some() {
+            return Err(ApiError::BadRequest(
+                "already-published videos cannot be rescheduled".into(),
+            ));
+        }
+        if *t <= chrono::Utc::now() {
+            return Err(ApiError::BadRequest(
+                "publishAt must be in the future (send null to publish now)".into(),
+            ));
+        }
+    }
     // Persist the provided fields (None = leave unchanged).
     let updated_row = videos::update(
         &state.db,
@@ -452,9 +488,15 @@ pub async fn update_video(
         body.description.as_deref(),
         body.tags.as_deref(),
         body.visibility.as_deref(),
+        body.publish_at,
     )
     .await?
     .ok_or(ApiError::NotFound)?;
+    let updated_row = if body.publish_at == Some(None) {
+        videos::publish_now(&state.db, id).await?.unwrap_or(updated_row)
+    } else {
+        updated_row
+    };
     let video: domain::Video = updated_row.into();
     Ok(Json(serde_json::to_value(&video).unwrap()))
 }

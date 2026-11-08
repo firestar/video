@@ -67,6 +67,19 @@ pub async fn run(state: WorkerState) -> anyhow::Result<()> {
         .publish("worker:ready", "worker online")
         .await?;
 
+    // Schedule tick: every 30s, publish scheduled videos whose time arrived.
+    let schedule_db = state.db.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            match db::videos::release_due(&schedule_db).await {
+                Ok(n) if n > 0 => info!(released = n, "published scheduled videos"),
+                Ok(_) => {}
+                Err(e) => warn!(error = ?e, "schedule tick failed"),
+            }
+        }
+    });
+
     loop {
         match queue.pop().await {
             Ok(Some(job)) => {

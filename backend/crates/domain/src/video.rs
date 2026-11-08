@@ -68,6 +68,8 @@ pub struct Video {
     pub like_count: i64,
     pub dislike_count: i64,
     pub published_at: Option<DateTime<Utc>>,
+    /// When a scheduled video becomes visible (NULL = not scheduled).
+    pub publish_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -95,6 +97,9 @@ pub struct VideoCreate {
     pub tags: Vec<String>,
     #[serde(default)]
     pub visibility: VideoVisibility,
+    /// Schedule: publish at this time instead of immediately (future only).
+    #[serde(default)]
+    pub publish_at: Option<DateTime<Utc>>,
 }
 
 /// Fields updated by the worker after transcode.
@@ -143,6 +148,7 @@ mod tests {
             like_count: 0,
             dislike_count: 0,
             published_at: None,
+            publish_at: None,
             created_at: Utc::now(),
         };
         let s = serde_json::to_string(&v).unwrap();

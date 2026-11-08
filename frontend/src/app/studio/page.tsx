@@ -26,6 +26,13 @@ function formatDuration(secs?: number) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+function toLocalInput(iso?: string | null) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function StudioContent() {
   const { user, logout } = useAuth();
   const [videos, setVideos] = useState<Video[]>([]);
@@ -55,7 +62,7 @@ function StudioContent() {
   }, [user]);
 
   const [editing, setEditing] = useState<string | null>(null);
-  const [draft, setDraft] = useState({ title: "", description: "", tags: "", visibility: "public" as VideoVisibility });
+  const [draft, setDraft] = useState({ title: "", description: "", tags: "", visibility: "public" as VideoVisibility, publishAt: "" });
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -67,6 +74,7 @@ function StudioContent() {
       description: v.description ?? "",
       tags: (v.tags ?? []).join(", "),
       visibility: v.visibility ?? "public",
+      publishAt: toLocalInput(v.publishAt),
     });
     setSavedMsg(null);
   };
@@ -89,6 +97,7 @@ function StudioContent() {
           .map((t) => t.trim())
           .filter(Boolean),
         visibility: draft.visibility,
+        publishAt: draft.publishAt ? new Date(draft.publishAt).toISOString() : null,
       };
       const updated: Video = await apiFetch(`/api/videos/${v.id}`, {
         method: "PATCH",
@@ -103,6 +112,25 @@ function StudioContent() {
       setError((e as Error).message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const [publishing, setPublishing] = useState<string | null>(null);
+
+  const publishNow = async (v: Video) => {
+    setPublishing(v.id);
+    setError(null);
+    try {
+      const updated: Video = await apiFetch(`/api/videos/${v.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ publishAt: null }),
+      });
+      setVideos((prev) => prev.map((x) => (x.id === v.id ? { ...x, ...updated } : x)));
+      setSavedMsg("Video published");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setPublishing(null);
     }
   };
 
@@ -258,6 +286,15 @@ function StudioContent() {
                           <option value="private">Private — only you</option>
                         </select>
                       </div>
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground">Schedule publish (empty = publish now)</label>
+                        <input
+                          type="datetime-local"
+                          value={draft.publishAt}
+                          onChange={(e) => setDraft({ ...draft, publishAt: e.target.value })}
+                          className="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-ring focus:ring-3 focus:ring-ring/30"
+                        />
+                      </div>
                        <div className="flex items-center gap-2">
                          <Button size="sm" onClick={() => saveEdit(v)} disabled={saving}>
                           {saving ? "Saving…" : "Save changes"}
@@ -282,10 +319,15 @@ function StudioContent() {
                               {v.visibility ?? "public"}
                             </span>
                             <span>{v.status}</span>
+                            {v.publishAt && (
+                              <span className="font-medium text-emerald-500">
+                                scheduled {new Date(v.publishAt).toLocaleString()}
+                              </span>
+                            )}
                           <span>{formatDuration(v.durationSecs)}</span>
                           <span>{v.viewCount.toLocaleString()} views</span>
                           <span>{v.likeCount.toLocaleString()} likes</span>
-                           {v.publishedAt && <span>{formatDate(v.publishedAt)}</span>}
+                          {v.publishedAt && <span>{formatDate(v.publishedAt)}</span>}
                         </div>
                         {v.tags && v.tags.length > 0 && (
                           <div className="mt-1 flex flex-wrap gap-1">
@@ -297,7 +339,12 @@ function StudioContent() {
                           </div>
                         )}
                       </div>
-                      <div className="flex shrink-0 items-center gap-2">
+                       <div className="flex shrink-0 items-center gap-2">
+                        {v.publishAt && (
+                          <Button size="sm" onClick={() => publishNow(v)} disabled={publishing === v.id}>
+                            {publishing === v.id ? "Publishing…" : "Publish now"}
+                          </Button>
+                        )}
                         <Button size="sm" variant="outline" onClick={() => startEdit(v)}>
                           Edit
                         </Button>

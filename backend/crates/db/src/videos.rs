@@ -24,6 +24,8 @@ pub struct VideoRow {
     pub like_count: i64,
     pub dislike_count: i64,
     pub published_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Scheduled publish time (NULL = not scheduled).
+    pub publish_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// Multi-quality transcode variants (worker-written), e.g.
     /// `[{"quality":"1080p",...,"objectKey":"videos/<id>_1080p.mp4"}]`.
@@ -70,6 +72,7 @@ impl From<VideoRow> for Video {
             like_count: r.like_count,
             dislike_count: r.dislike_count,
             published_at: r.published_at,
+            publish_at: r.publish_at,
             created_at: r.created_at,
         }
     }
@@ -80,10 +83,10 @@ pub async fn create(pool: &Pool, req: &VideoCreate) -> Result<VideoRow, sqlx::Er
     let visibility = req.visibility.as_str();
     sqlx::query_as(
         r#"
-        INSERT INTO videos (channel_id, title, description, object_key, tags, status, visibility)
-        VALUES ($1, $2, $3, $4, $5, 'processing', $6)
-        RETURNING *
-        "#,
+         INSERT INTO videos (channel_id, title, description, object_key, tags, status, visibility, publish_at)
+         VALUES ($1, $2, $3, $4, $5, 'processing', $6, $7)
+         RETURNING *
+         "#,
     )
     .bind(req.channel_id)
     .bind(req.title.as_str())
@@ -91,6 +94,7 @@ pub async fn create(pool: &Pool, req: &VideoCreate) -> Result<VideoRow, sqlx::Er
     .bind(req.object_key.as_str())
     .bind(&req.tags)
     .bind(visibility)
+    .bind(req.publish_at)
     .fetch_one(pool)
     .await
 }
@@ -104,14 +108,19 @@ pub async fn update(
     description: Option<&str>,
     tags: Option<&[String]>,
     visibility: Option<&str>,
+    publish_at: Option<Option<chrono::DateTime<chrono::Utc>>>,
 ) -> Result<Option<VideoRow>, sqlx::Error> {
+    // publish_at: None = leave unchanged, Some(None) = clear the schedule,
+    // Some(Some(t)) = set a new schedule.
+    let new_schedule = publish_at.as_ref().and_then(|v| *v);
     sqlx::query_as(
         r#"
         UPDATE videos SET
             title = COALESCE($2, title),
             description = CASE WHEN $3::TEXT IS NULL THEN description ELSE $3 END,
             tags = COALESCE($4, tags),
-            visibility = COALESCE($5, visibility)
+            visibility = COALESCE($5, visibility),
+            publish_at = CASE WHEN $6::bool THEN $7::timestamptz ELSE publish_at END
         WHERE id = $1
         RETURNING *
         "#,
@@ -121,6 +130,8 @@ pub async fn update(
     .bind(description)
     .bind(tags)
     .bind(visibility)
+    .bind(publish_at.is_some())
+    .bind(new_schedule)
     .fetch_optional(pool)
     .await
 }
@@ -186,8 +197,10 @@ pub async fn finalize(
             thumbnail_url = COALESCE($5, thumbnail_url),
             streams = COALESCE($6, streams),
             object_key = COALESCE($7, object_key),
-            published_at = CASE WHEN $2 = 'ready' AND published_at IS NULL
-                THEN now() ELSE published_at END
+             published_at = CASE WHEN $2 = 'ready' AND published_at IS NULL
+                 THEN CASE WHEN publish_at IS NOT NULL AND publish_at > now() THEN NULL
+                           ELSE COALESCE(publish_at, now()) END
+                 ELSE published_at END
         WHERE id = $1
         RETURNING *
         "#,
@@ -254,7 +267,8 @@ pub async fn list_public(
     };
     let sql = format!(
         r#"SELECT * FROM videos
-        WHERE status = 'ready' AND visibility = 'public'
+         WHERE status = 'ready' AND visibility = 'public'
+           AND published_at IS NOT NULL AND published_at <= now()
         ORDER BY {order_by}
         LIMIT $1 OFFSET $2"#
     );
@@ -272,7 +286,8 @@ pub async fn count_and_views_for_channel(
 ) -> Result<(i64, i64), sqlx::Error> {
     let (n, views) = sqlx::query_as("
         SELECT COUNT(*), COALESCE(SUM(view_count), 0)::BIGINT
-        FROM videos WHERE channel_id = $1 AND status = 'ready' AND visibility = 'public'")
+        FROM videos WHERE channel_id = $1 AND status = 'ready' AND visibility = 'public'
+          AND published_at IS NOT NULL AND published_at <= now()")
         .bind(channel_id)
         .fetch_one(pool)
         .await?;
@@ -289,7 +304,8 @@ pub async fn list_for_channel(
     sqlx::query_as(
         r#"
         SELECT * FROM videos
-        WHERE channel_id = $1 AND status = 'ready' AND visibility = 'public'
+         WHERE channel_id = $1 AND status = 'ready' AND visibility = 'public'
+           AND published_at IS NOT NULL AND published_at <= now()
         ORDER BY published_at DESC NULLS LAST, created_at DESC
         LIMIT $2 OFFSET $3
         "#,
@@ -329,7 +345,9 @@ pub async fn search(pool: &Pool, query: &str, limit: i64) -> Result<Vec<VideoRow
     sqlx::query_as(
         r#"
         SELECT * FROM videos
-        WHERE status = 'ready' AND visibility = 'public'
+         WHERE status = 'ready' AND visibility = 'public'
+           AND published_at IS NOT NULL AND published_at <= now()
+           AND search_vector @@ plainto_tsquery('english', $1)
           AND search_vector @@ plainto_tsquery('english', $1)
         ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
         LIMIT $2
@@ -351,7 +369,7 @@ pub async fn trending_recent(
         r#"
         SELECT * FROM videos
         WHERE status = 'ready' AND visibility = 'public'
-          AND published_at IS NOT NULL
+           AND published_at IS NOT NULL AND published_at <= now()
           AND published_at >= now() - interval '7 days'
         ORDER BY view_count DESC, created_at DESC
         LIMIT $1
@@ -374,7 +392,8 @@ pub async fn find_related(
         SELECT * FROM videos
         WHERE id != $1
           AND status = 'ready'
-          AND visibility = 'public'
+           AND visibility = 'public'
+           AND published_at IS NOT NULL AND published_at <= now()
           AND (
               channel_id = (SELECT channel_id FROM videos WHERE id = $1)
               OR tags && (SELECT tags FROM videos WHERE id = $1)
@@ -386,5 +405,38 @@ pub async fn find_related(
     .bind(exclude_id)
     .bind(limit)
     .fetch_all(pool)
+    .await
+}
+
+/// Release every scheduled video whose time has arrived (worker schedule
+/// tick): published_at becomes the scheduled time. Returns rows released.
+pub async fn release_due(pool: &Pool) -> Result<u64, sqlx::Error> {
+    let res = sqlx::query(
+        r#"
+        UPDATE videos SET published_at = publish_at
+        WHERE status = 'ready'
+          AND publish_at IS NOT NULL
+          AND publish_at <= now()
+          AND published_at IS NULL
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
+
+/// Publish a ready video right now (cancel its schedule).
+pub async fn publish_now(pool: &Pool, id: Uuid) -> Result<Option<VideoRow>, sqlx::Error> {
+    sqlx::query_as(
+        r#"
+        UPDATE videos SET
+            publish_at = NULL,
+            published_at = COALESCE(published_at, now())
+        WHERE id = $1 AND status = 'ready' AND published_at IS NULL
+        RETURNING *
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
     .await
 }
