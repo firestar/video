@@ -46,7 +46,16 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::get(routes::list_comments_threaded),
         )
         .layer(axum::middleware::from_fn(middleware::rate_limit))
+        .with_state(state.clone());
+
+    // /api/home/feed: public, but personalized when a valid token is present.
+    let home_feed_routes = Router::new()
         .route("/api/home/feed", axum::routing::get(routes::home_feed))
+        .layer(axum::middleware::from_fn(middleware::rate_limit))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::optional_auth_middleware,
+        ))
         .with_state(state.clone());
 
     let protected_routes = Router::new()
@@ -201,6 +210,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(videos_routes)
         .merge(video_detail_routes)
         .merge(channel_routes)
+        .merge(home_feed_routes)
         .merge(playlist_detail_routes)
         .layer(cors)
         .layer(TraceLayer::new_for_http())
