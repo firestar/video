@@ -10,10 +10,13 @@ import ChannelEditor from "@/components/ChannelEditor";
 import VideoGrid from "@/components/VideoGrid";
 import { ChannelPageSkeleton } from "@/components/Skeletons";
 import type { Channel, Video } from "@/lib/types";
+import { formatCount, formatDate } from "@/lib/format";
 interface ChannelData {
   channel: Channel;
   subscriberCount: number;
   isSubscribed?: boolean;
+  videoCount?: number;
+  totalViews?: number;
   videos: Video[];
 }
 
@@ -28,6 +31,7 @@ function ChannelContent() {
   const [count, setCount] = useState(0);
   const [subscribed, setSubscribed] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [tab, setTab] = useState<"videos" | "about">("videos");
   useEffect(() => {
     if (!channelId) return;
     setLoading(true);
@@ -128,17 +132,48 @@ function ChannelContent() {
           />
         )}
 
-        {channel.description && (
-          <p className="mt-4 max-w-3xl text-sm text-foreground/70">
-            {channel.description}
-          </p>
-        )}
-
-        <div className="mt-10">
-          <h2 className="mb-6 text-lg font-semibold">Videos</h2>
-          <VideoGrid videos={videos} />
+        <div className="mt-6 flex gap-6 border-b border-border">
+          {(["videos", "about"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`-mb-px border-b-2 px-1 pb-3 text-sm font-medium capitalize transition-colors ${
+                tab === t
+                  ? "border-foreground text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {t}
+            </button>
+          ))}
         </div>
-      </div>
+
+        {tab === "videos" ? (
+          <div className="mt-8">
+            <VideoGrid videos={videos} />
+          </div>
+        ) : (
+          <div className="mt-6 max-w-3xl space-y-4 text-sm">
+            {channel.description ? (
+              <p className="whitespace-pre-wrap text-foreground/80">{channel.description}</p>
+            ) : (
+              <p className="text-muted-foreground">No description provided.</p>
+            )}
+            <div className="space-y-1 pt-2 text-muted-foreground">
+              <div><span className="font-medium text-foreground">{count.toLocaleString()}</span> subscribers</div>
+              <div><span className="font-medium text-foreground">{(data.videoCount ?? 0).toLocaleString()}</span> videos</div>
+              <div><span className="font-medium text-foreground">{formatCount(data.totalViews ?? 0)}</span> total views</div>
+              <div>Joined {formatDate(channel.createdAt)}</div>
+            </div>
+            <div className="pt-2">
+              <div className="text-xs uppercase tracking-wide text-muted-foreground">Channel URL</div>
+              <a href={`/channel/${channel.id}`} className="break-all text-primary hover:underline">
+                video.synload.com/channel/{channel.id}
+              </a>
+            </div>
+          </div>
+        )}
+     </div>
     </div>
   );
 }

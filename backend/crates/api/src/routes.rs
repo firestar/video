@@ -987,6 +987,7 @@ pub async fn get_channel(
 
     let video_rows = videos::list_for_channel(&state.db, id, limit, offset).await?;
     let videos_json = videos_with_channels(&state.db, &state.storage, &video_rows).await?;
+    let (video_count, total_views) = videos::count_and_views_for_channel(&state.db, id).await?;
 
     let mut channel_json = serde_json::to_value(&channel).unwrap();
     channel_json["avatarUrl"] = serde_json::json!(
@@ -999,6 +1000,8 @@ pub async fn get_channel(
         "channel": channel_json,
         "subscriberCount": subscriber_count,
         "isSubscribed": is_subscribed,
+        "videoCount": video_count,
+        "totalViews": total_views,
         "videos": videos_json,
     })))
 }

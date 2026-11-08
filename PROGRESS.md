@@ -67,7 +67,9 @@
       - `RelatedVideos.tsx`: per-card "Add to queue" button (check when queued)
       - Watch page: `onEnded` → `shift()` → `router.push` next video (auto-advance); provider wraps the page; queue panel in both mobile + desktop columns
       - Verified live: add to queue → "Up next (1)" panel + "next up" label + related card checkmark; 3s video auto-advanced to the queued video
-    - **Share button (in progress — frontend built, tsc + next build green, pending deploy)**: watch-page "Share" button copies the video URL to the clipboard (green "Copied!" for 2s), with a `window.prompt` fallback when the clipboard API is unavailable
+    - **Share button (shipped live, commit `9519172`, deployed 17:20 UTC)**: watch-page "Share" button copies the video URL to the clipboard (green "Copied!" for 2s), with a `window.prompt` fallback when the clipboard API is unavailable
+    - **Notifications (verified live via `e2e-notifications.sh`)**: user A subscribes to B's channel → B uploads → A's `GET /api/notifications` returns the `new_upload` row (channelName, videoId, thumbnail, unread) → `POST /api/notifications/read-all` → `unreadCount` 0. Bell icon in the Navbar polls every 30s while logged in
+    - **Channel tabs (in progress — backend + frontend built, tsc green, pending deploy)**: channel page gets Videos / About tabs. Backend `get_channel` now returns `videoCount` + `totalViews` (new `videos::count_and_views_for_channel`); frontend About tab shows description, subscriber/video/view counts, join date, channel URL
 
 ## Key Files
 - `backend/crates/api/src/routes.rs` — all API handlers

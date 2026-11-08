@@ -217,6 +217,20 @@ pub async fn list_public(
         .await
 }
 
+/// Ready-video count + total views for one channel (channel About tab).
+pub async fn count_and_views_for_channel(
+    pool: &Pool,
+    channel_id: Uuid,
+) -> Result<(i64, i64), sqlx::Error> {
+    let (n, views) = sqlx::query_as("
+        SELECT COUNT(*), COALESCE(SUM(view_count), 0)
+        FROM videos WHERE channel_id = $1 AND status = 'ready'")
+        .bind(channel_id)
+        .fetch_one(pool)
+        .await?;
+    Ok((n, views))
+}
+
 /// Ready videos for one channel.
 pub async fn list_for_channel(
     pool: &Pool,
