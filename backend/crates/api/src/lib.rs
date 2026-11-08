@@ -40,10 +40,6 @@ pub fn build_router(state: AppState) -> Router {
             "/api/videos/{id}/related",
             axum::routing::get(routes::get_related_videos),
         )
-        .route(
-            "/api/videos/{id}/comments",
-            axum::routing::post(routes::create_comment),
-        )
         // `{id}` = video id here; must match the param name used by
         // DELETE /api/comments/{id} (matchit rejects differing names).
         .route(
@@ -55,6 +51,10 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state.clone());
 
     let protected_routes = Router::new()
+        .route(
+            "/api/videos/{id}/comments",
+            axum::routing::post(routes::create_comment),
+        )
         .route("/api/me", axum::routing::get(routes::me))
         .route(
             "/api/history",
