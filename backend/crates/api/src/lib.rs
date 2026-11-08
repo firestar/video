@@ -96,6 +96,14 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(routes::record_view),
         )
         .route(
+            "/api/watch-later",
+            axum::routing::get(routes::list_watch_later).post(routes::add_watch_later),
+        )
+        .route(
+            "/api/watch-later/{videoId}",
+            axum::routing::delete(routes::remove_watch_later),
+        )
+        .route(
             "/api/channels/{id}/subscribe",
             axum::routing::post(routes::subscribe_to_channel),
         )

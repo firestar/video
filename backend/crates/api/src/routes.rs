@@ -5,7 +5,7 @@ use axum::{Extension, Json};
 use uuid::Uuid;
 
 use auth::encode_token;
-use db::{channels, comments, history, likes, notifications, playlists, subscriptions, users, videos};
+use db::{channels, comments, history, likes, notifications, playlists, subscriptions, users, videos, watch_later};
 use domain::{
     CommentCreate, HistoryQuery, JwtClaims, LoginRequest, PlaylistCreate, PlaylistItemAdd,
     PlaylistUpdate, RegisterRequest, SubscribeRequest, TokenResponse, User, Video, VideoCreate,
@@ -377,12 +377,13 @@ pub async fn get_video(
         None
     };
 
-    let (has_liked, has_disliked) = match claims {
+    let (has_liked, has_disliked, in_watch_later) = match claims {
         Some(Extension(c)) => (
             likes::has_liked(&state.db, c.sub, id).await.unwrap_or(false),
             likes::has_disliked(&state.db, c.sub, id).await.unwrap_or(false),
+            watch_later::contains(&state.db, c.sub, id).await.unwrap_or(false),
         ),
-        None => (false, false),
+        None => (false, false, false),
     };
     Ok(Json(serde_json::json!({
         "video": serde_json::to_value(&video).unwrap(),
@@ -391,6 +392,7 @@ pub async fn get_video(
         "streams": streams_value,
         "hasLiked": has_liked,
         "hasDisliked": has_disliked,
+        "inWatchLater": in_watch_later,
         "thumbnailUrl": thumbnail_url.map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
     })))
 }
@@ -1072,6 +1074,49 @@ pub async fn unlike_video(
      let _ = likes::undislike(&state.db, claims.sub, id).await?;
      Ok(StatusCode::NO_CONTENT)
  }
+/// GET /api/watch-later — the user's watch-later videos (newest-saved first).
+pub async fn list_watch_later(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let rows = watch_later::list_for_user(&state.db, claims.sub).await?;
+    let videos: Vec<Video> = rows.iter().map(|r| r.clone().into()).collect();
+    Ok(Json(json!({ "videos": videos })))
+}
+
+/// POST /api/watch-later — save a video to the user's watch-later list.
+pub async fn add_watch_later(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<StatusCode, ApiError> {
+    let video_id = body
+        .get("videoId")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .ok_or(ApiError::BadRequest("videoId is required and must be a valid UUID".into()))?;
+    // The video must exist and be viewable by this user (private: owner only).
+    let row = videos::find_by_id(&state.db, video_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let channel = channels::find_by_id(&state.db, row.channel_id).await?;
+    let is_owner = channel.as_ref().is_some_and(|c| c.user_id == claims.sub);
+    if row.visibility != "public" && !is_owner {
+        return Err(ApiError::NotFound);
+    }
+    watch_later::add(&state.db, claims.sub, video_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// DELETE /api/watch-later/{videoId} — remove a video from watch later.
+pub async fn remove_watch_later(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Path(video_id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    watch_later::remove(&state.db, claims.sub, video_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
 
 /// POST /api/videos/{id}/view — record a view.
 pub async fn record_view(
@@ -1085,8 +1130,6 @@ pub async fn record_view(
 
 // ---------- Channel routes ----------
 
-/// GET /api/channels/{id} — channel info, live subscriber count, paginated videos.
-/// GET /api/channels/{id} — channel info, live subscriber count, isSubscribed,
 /// paginated videos. Protected: requires a valid JWT (anonymous → 401;
 /// channel page falls back gracefully).
 pub async fn get_channel(

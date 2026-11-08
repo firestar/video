@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { formatCount, formatDate } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import CommentSection from "@/components/CommentSection";
-import { Bell, BellOff, ThumbsUp, ThumbsDown, SlidersHorizontal, Check, ListVideo, Plus, Share2, Repeat, Gauge } from "lucide-react";
+import { Bell, BellOff, ThumbsUp, ThumbsDown, SlidersHorizontal, Check, ListVideo, Plus, Share2, Repeat, Gauge, Clock } from "lucide-react";
 import RelatedVideos from "@/components/RelatedVideos";
 import WatchQueue from "@/components/WatchQueue";
 import { useWatchQueue, WatchQueueProvider } from "@/lib/watch-queue";
@@ -29,6 +29,7 @@ interface WatchData {
   streams: Stream[];
   hasLiked?: boolean;
   hasDisliked?: boolean;
+  inWatchLater?: boolean;
 }
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
@@ -47,6 +48,7 @@ function WatchContent() {
   const [dislikeCount, setDislikeCount] = useState(0);
   const [viewCount, setViewCount] = useState(0);
   const [subscribed, setSubscribed] = useState(false);
+  const [inWatchLater, setInWatchLater] = useState(false);
 
   const [subHint, setSubHint] = useState<string | null>(null);
 
@@ -149,6 +151,7 @@ function WatchContent() {
         setDislikeCount(d.video.dislikeCount ?? 0);
         setLiked(d.hasLiked ?? false);
         setDisliked(d.hasDisliked ?? false);
+        setInWatchLater(d.inWatchLater ?? false);
         setViewCount(d.video.viewCount ?? 0);
         if (!viewedRef.current && getToken()) {
           viewedRef.current = true;
@@ -308,6 +311,27 @@ function WatchContent() {
       setDislikeCount(prevDislike);
     }
   }, [disliked, liked, likeCount, dislikeCount, videoId]);
+
+  const toggleWatchLater = useCallback(async () => {
+    if (!getToken()) {
+      window.location.href = "/login";
+      return;
+    }
+    const next = !inWatchLater;
+    setInWatchLater(next);
+    try {
+      if (next) {
+        await apiFetch("/api/watch-later", {
+          method: "POST",
+          body: JSON.stringify({ videoId }),
+        });
+      } else {
+        await apiFetch(`/api/watch-later/${videoId}`, { method: "DELETE" });
+      }
+    } catch {
+      setInWatchLater(!next);
+    }
+  }, [inWatchLater, videoId]);
 
   const toggleSubscribe = useCallback(() => {
     if (!user) {
@@ -549,7 +573,17 @@ function WatchContent() {
                 {copied ? <Check className="size-4" /> : <Share2 className="size-4" />}
                 {copied ? "Copied!" : "Share"}
               </button>
-              <div className="relative">
+               <button
+                 onClick={toggleWatchLater}
+                 aria-pressed={inWatchLater}
+                 className={`flex h-9 items-center gap-2 rounded-full border border-border pl-4 pr-3 text-sm hover:bg-muted ${
+                   inWatchLater ? "" : "text-muted-foreground"
+                 }`}
+               >
+                 <Clock className="size-4" />
+                 {inWatchLater ? "Saved" : "Watch later"}
+               </button>
+               <div className="relative">
                 <button
                   onClick={openPlaylistMenu}
                   className="flex h-9 items-center gap-2 rounded-full border border-border pl-4 pr-3 text-sm text-muted-foreground hover:bg-muted"

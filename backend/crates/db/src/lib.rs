@@ -10,5 +10,6 @@ pub mod playlists;
 pub mod subscriptions;
 pub mod users;
 pub mod videos;
+pub mod watch_later;
 
 pub use pool::{create_pool, Database, Pool, ping};
