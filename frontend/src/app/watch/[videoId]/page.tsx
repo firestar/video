@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { formatCount, formatDate, formatDuration } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import CommentSection from "@/components/CommentSection";
-import { Bell, BellOff, ThumbsUp, ThumbsDown, SlidersHorizontal, Check, ListVideo, Plus, Share2, Repeat, Gauge, Clock } from "lucide-react";
+import { Bell, BellOff, ThumbsUp, ThumbsDown, SlidersHorizontal, Check, ListVideo, Plus, Share2, Repeat, Gauge, Clock, RectangleHorizontal } from "lucide-react";
 import RelatedVideos from "@/components/RelatedVideos";
 import WatchQueue from "@/components/WatchQueue";
 import { useWatchQueue, WatchQueueProvider } from "@/lib/watch-queue";
@@ -116,6 +116,25 @@ function WatchContent() {
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [loopOn, setLoopOn] = useState(false);
+  const [theater, setTheater] = useState(false);
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem("yt-clone-theater") === "true") setTheater(true);
+    } catch {
+      // ignore
+    }
+  }, []);
+  const toggleTheater = useCallback(() => {
+    setTheater((t) => {
+      const nt = !t;
+      try {
+        window.localStorage.setItem("yt-clone-theater", String(nt));
+      } catch {
+        // ignore
+      }
+      return nt;
+    });
+  }, []);
   const [speedMenuOpen, setSpeedMenuOpen] = useState(false);
   const [activeChapter, setActiveChapter] = useState(0);
   const pendingTimeRef = useRef<number | null>(null);
@@ -407,7 +426,7 @@ function WatchContent() {
 
   return (
     <div className="mx-auto w-full max-w-[1750px] flex-1 px-4 py-4 lg:px-8">
-      <div className="flex flex-col gap-6 lg:flex-row lg:gap-8">
+      <div className={`flex flex-col gap-6 lg:gap-8 ${theater ? "" : "lg:flex-row"}`}>
         <div className="min-w-0 flex-1">
            {currentUrl ? (
              <div className="relative" ref={playerRef}>
@@ -447,6 +466,18 @@ function WatchContent() {
                  >
                    <Repeat className="size-3.5" />
                  </button>
+                  <button
+                    onClick={toggleTheater}
+                    aria-pressed={theater}
+                    title={theater ? "Exit theater mode" : "Theater mode"}
+                    className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium backdrop-blur transition-colors ${
+                      theater
+                        ? "bg-white text-black"
+                        : "bg-black/70 text-white hover:bg-black/90"
+                    }`}
+                  >
+                    <RectangleHorizontal className="size-3.5" />
+                  </button>
                  <div className="relative">
                    <button
                      onClick={() => setSpeedMenuOpen((o) => !o)}
@@ -693,7 +724,7 @@ function WatchContent() {
           </div>
         </div>
 
-        <aside className="hidden w-[400px] shrink-0 space-y-4 lg:block xl:w-[440px]">
+        <aside className={`shrink-0 space-y-4 ${theater ? "block w-full" : "hidden w-[400px] lg:block xl:w-[440px]"}`}>
           <WatchQueue currentVideoId={video.id} />
           <RelatedVideos videoId={video.id} />
         </aside>
