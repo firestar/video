@@ -46,6 +46,21 @@ fn row_to_user(row: sqlx::postgres::PgRow) -> Result<UserRow, sqlx::Error> {
     })
 }
 
+/// Build a channel handle from a display name: keep only ASCII
+/// alphanumerics so handles never contain spaces or punctuation
+/// (YouTube-style @handles). Falls back to "user" if nothing remains.
+fn sanitize_handle(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    if cleaned.is_empty() {
+        "user".to_string()
+    } else {
+        cleaned
+    }
+}
+
 /// Insert a new user and their channel in one transaction.
 ///
 /// The display name may collide with an existing one (YouTube-style —
@@ -74,7 +89,8 @@ pub async fn create(
         .await?,
     )?;
 
-    let mut handle = req.channel_name.clone();
+    let base = sanitize_handle(&req.channel_name);
+    let mut handle = base.clone();
     let mut suffix: u32 = 0;
     loop {
         // Each attempt runs under its own savepoint: a unique-violation
@@ -108,7 +124,7 @@ pub async fn create(
                         "too many channel handle collisions".into(),
                     ));
                 }
-                handle = format!("{}{}", req.channel_name, suffix);
+                handle = format!("{}{}", base, suffix);
             }
             Err(e) => return Err(e),
         }
