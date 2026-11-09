@@ -2,7 +2,9 @@
 
 A rerunnable, self-contained end-to-end test suite for the synload backend.
 It exercises every feature through the **public HTTP API** against a live
-backend, registering its own users and creating its own videos on each run.
+backend. The shared owner/viewer users are fixed accounts (registered once,
+then logged in on every run); each test creates its own videos, so the suite
+is rerunnable without accumulating a fresh account per run.
 
 ## Run
 
@@ -64,7 +66,12 @@ Without it, those specific assertions are reported as `SKIP` (not failures).
   worker then marks the video `failed`. Every feature endpoint works on a video
   of any status, so this is harmless. (A browser-based upload — e.g. the
   Playwright suite in `frontend/e2e` — exercises the real transcode path.)
-- Each run uses a unique `run_id` (epoch ms) so users/channels never collide
-  across runs. Created videos are deleted at the end (best-effort); users and
-  channels have no delete endpoint and are left in place.
+- The shared owner/viewer are fixed accounts (`e2e-api-{owner,viewer}@synload.local`),
+  registered once and reused; a start-of-run reset clears their notifications
+  and any leftover subscription. A few dedicated tests (`test_01_auth`,
+  `test_02_account`) still register throwaway users, since they test
+  registration and destructive profile/password changes directly. Each run uses
+  a unique `run_id` (epoch ms) so those throwaway users never collide. Created
+  videos are deleted at the end (best-effort); users and channels have no
+  delete endpoint and are left in place.
 - No third-party dependencies — stdlib only (`urllib`, `json`, `subprocess`).

@@ -33,6 +33,7 @@ def main():
     print()
 
     ctx = Ctx()
+    ctx.reset_fixed_state()
     t0 = time.time()
     for mod_name in modules:
         label = mod_name[:-3]

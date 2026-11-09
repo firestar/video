@@ -1,8 +1,11 @@
 """Shared harness for the API e2e suite.
 
 Targets a live backend (default https://video.synload.com; override with
-E2E_BASE). Every test registers its own users and creates its own videos via
-the public API, so the suite is self-contained and rerunnable.
+E2E_BASE). The shared owner/viewer users are FIXED accounts (registered once,
+then logged in on every run) so the suite stops creating a fresh account per
+run; each test still creates its own videos via the public API, so it is
+rerunnable. A few dedicated tests (auth register, account profile/password)
+still register throwaway users, since they test those endpoints directly.
 
 Videos are created with a presigned object key but the bytes are never PUT to
 the bucket (the upload endpoint sits behind Cloudflare bot protection, which
@@ -112,24 +115,58 @@ class Ctx:
         self._existing_ready = None
 
     # ---- users ----
+    # Fixed per-role accounts: registered once, then logged in on every run,
+    # so the suite stops creating a fresh account per run. (A few dedicated
+    # tests still register throwaway users — see test_01_auth, test_02_account.)
+    FIXED_ACCOUNTS = {
+        "owner": "e2e-api-owner@synload.local",
+        "viewer": "e2e-api-viewer@synload.local",
+    }
+    FIXED_PASSWORD = "TestPass123!"
+
     def register(self, role, name=None):
-        name = name or f"E2E {role} {self.run_id}"
-        email = f"e2e-{role}-{self.run_id}@test.local"
-        password = "TestPass123!"
-        s, me = self.client.post("/api/auth/register", body={
-            "name": name, "email": email, "password": password, "channelName": name})
-        self.results.check(f"register {role}", s == 200, f"got {s}: {me}")
-        if s != 200:
+        email = self.FIXED_ACCOUNTS.get(role)
+        password = self.FIXED_PASSWORD
+        if email is None:
+            # Unknown role: fall back to a per-run account (shouldn't happen).
+            name = name or f"E2E {role} {self.run_id}"
+            email = f"e2e-{role}-{self.run_id}@test.local"
+            s, me = self.client.post("/api/auth/register", body={
+                "name": name, "email": email, "password": password, "channelName": name})
+            token = me.get("token") if isinstance(me, dict) else None
+            detail = f"register got {s}: {me}"
+        else:
+            # Fixed account: log in; register only on the very first run.
+            s, tok = self.client.post("/api/auth/login", body={
+                "email": email, "password": password})
+            token = tok.get("token") if isinstance(tok, dict) else None
+            detail = f"login got {s}"
+            if not token:
+                name = name or f"E2E API {role.title()}"
+                s, me = self.client.post("/api/auth/register", body={
+                    "name": name, "email": email, "password": password,
+                    "channelName": name})
+                token = me.get("token") if isinstance(me, dict) else None
+                detail = f"register got {s}: {me}"
+        if not token:
+            self.results.check(f"ensure {role} (authed)", False, detail)
             self.users[role] = None
             return None
-        s2, me2 = self.client.get("/api/me", token=me["token"])
+        s2, me2 = self.client.get("/api/me", token=token)
+        ok = s2 == 200 and isinstance(me2, dict) and me2.get("channelId")
+        self.results.check(f"ensure {role} (authed)", ok,
+                           f"got {s2}: {me2}" + ("" if ok else f" [{detail}]"))
+        if not ok:
+            self.users[role] = None
+            return None
         self.users[role] = {
-            "token": me["token"],
+            "token": token,
             "user_id": me2.get("id"),
             "channel_id": me2.get("channelId"),
+            "channel_name": me2.get("channel"),
             "email": email,
             "password": password,
-            "name": name,
+            "name": me2.get("name"),
         }
         return self.users[role]
 
@@ -137,6 +174,21 @@ class Ctx:
         if role not in self.users:
             self.register(role)
         return self.users[role]
+
+    def reset_fixed_state(self):
+        """Best-effort: put the fixed accounts in a clean state before the run.
+
+        Mirrors the UI suite: clear notifications and drop any leftover
+        subscription so a crashed run can't affect exact-state checks.
+        Subscribe/unsubscribe are idempotent, so this is safe to repeat.
+        """
+        owner = self.user("owner")
+        viewer = self.user("viewer")
+        if owner and viewer:
+            self.client.delete(f"/api/channels/{owner['channel_id']}/subscribe",
+                               token=viewer["token"])
+            self.client.post("/api/notifications/read-all", token=owner["token"])
+            self.client.post("/api/notifications/read-all", token=viewer["token"])
 
     # ---- videos ----
     def video(self, key, role="owner", title=None, visibility="public",
