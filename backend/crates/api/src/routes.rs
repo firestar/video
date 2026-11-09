@@ -1080,7 +1080,7 @@ pub async fn list_watch_later(
     Extension(claims): Extension<JwtClaims>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let rows = watch_later::list_for_user(&state.db, claims.sub).await?;
-    let videos: Vec<Video> = rows.iter().map(|r| r.clone().into()).collect();
+    let videos = videos_with_channels(&state.db, &state.storage, &rows).await?;
     Ok(Json(json!({ "videos": videos })))
 }
 

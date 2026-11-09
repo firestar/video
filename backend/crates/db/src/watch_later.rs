@@ -47,7 +47,7 @@ pub async fn remove(pool: &Pool, user_id: Uuid, video_id: Uuid) -> Result<(), sq
 
 /// Whether the video is already in the user's watch-later list.
 pub async fn contains(pool: &Pool, user_id: Uuid, video_id: Uuid) -> Result<bool, sqlx::Error> {
-    let row: Option<(i64,)> =
+    let row: Option<(i32,)> =
         sqlx::query_as("SELECT 1 FROM watch_later WHERE user_id = $1 AND video_id = $2")
             .bind(user_id)
             .bind(video_id)
