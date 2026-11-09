@@ -34,7 +34,8 @@ export async function apiFetch<T = unknown>(
     let msg = `HTTP ${res.status}`;
     try {
       const j = JSON.parse(body);
-      msg = j.error ?? j.message ?? msg;
+      const e = j.error ?? j.message;
+      msg = (typeof e === "string" ? e : e?.message) ?? msg;
     } catch {}
     throw new Error(msg);
   }
