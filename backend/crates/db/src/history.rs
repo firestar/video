@@ -39,7 +39,8 @@ pub async fn upsert(
         ON CONFLICT (user_id, video_id)
         DO UPDATE SET watched_until_secs = GREATEST(watch_history.watched_until_secs, EXCLUDED.watched_until_secs),
                       updated_at = now()
-        "#,
+         RETURNING *
+         "#,
     )
     .bind(user_id)
     .bind(video_id)
