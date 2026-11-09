@@ -72,6 +72,10 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(routes::change_password),
         )
         .route(
+            "/api/reports",
+            axum::routing::post(routes::create_report),
+        )
+        .route(
             "/api/history",
             axum::routing::get(routes::history)
                 .post(routes::record_history)

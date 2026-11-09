@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { formatCount, formatDate, formatDuration } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import CommentSection from "@/components/CommentSection";
-import { Bell, BellOff, ThumbsUp, ThumbsDown, SlidersHorizontal, Check, ListVideo, Plus, Share2, Repeat, Gauge, Clock, RectangleHorizontal } from "lucide-react";
+import ReportDialog from "@/components/ReportDialog";
+import { Bell, BellOff, ThumbsUp, ThumbsDown, SlidersHorizontal, Check, ListVideo, Plus, Share2, Repeat, Gauge, Clock, RectangleHorizontal, Flag } from "lucide-react";
 import RelatedVideos from "@/components/RelatedVideos";
 import WatchQueue from "@/components/WatchQueue";
 import { useWatchQueue, WatchQueueProvider } from "@/lib/watch-queue";
@@ -51,6 +52,7 @@ function WatchContent() {
   const [viewCount, setViewCount] = useState(0);
   const [subscribed, setSubscribed] = useState(false);
   const [inWatchLater, setInWatchLater] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
 
   const [subHint, setSubHint] = useState<string | null>(null);
 
@@ -694,6 +696,14 @@ function WatchContent() {
                   </div>
                 )}
               </div>
+               <button
+                 onClick={() => setReportOpen(true)}
+                 className="flex h-9 items-center gap-2 rounded-full border border-border pl-4 pr-3 text-sm text-muted-foreground hover:bg-muted"
+                 aria-label="Report video"
+               >
+                 <Flag className="size-4" />
+                 Report
+               </button>
               <div className="ml-2 text-sm text-muted-foreground">
                 {formatCount(viewCount)} views · {formatDate(video.publishedAt ?? video.createdAt)}
               </div>
@@ -723,6 +733,14 @@ function WatchContent() {
           <div className="mt-6">
             <CommentSection videoId={video.id} isOwner={data.isOwner ?? false} />
           </div>
+          {reportOpen && (
+            <ReportDialog
+              targetType="video"
+              targetId={video.id}
+              title="this video"
+              onClose={() => setReportOpen(false)}
+            />
+          )}
         </div>
 
         <aside className={`shrink-0 space-y-4 ${theater ? "block w-full" : "hidden w-[400px] lg:block xl:w-[440px]"}`}>

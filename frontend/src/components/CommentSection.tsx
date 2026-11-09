@@ -5,8 +5,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { formatCount, formatDate } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
-import { ThumbsUp, Trash2, Pencil, Pin } from "lucide-react";
+import { ThumbsUp, Trash2, Pencil, Pin, Flag } from "lucide-react";
 import { CommentSectionSkeleton } from "@/components/Skeletons";
+import ReportDialog from "@/components/ReportDialog";
 import type { Comment } from "@/lib/types";
 
 interface ThreadedResponse {
@@ -53,6 +54,7 @@ function CommentItem({
   const [editBody, setEditBody] = useState(comment.body);
   const [saving, setSaving] = useState(false);
   const [pinning, setPinning] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
 
   const isAuthor = user?.id === comment.userId;
   const isPinned = Boolean(comment.pinnedAt);
@@ -220,9 +222,26 @@ function CommentItem({
                 Delete
               </button>
             )}
+            {!isAuthor && (
+              <button
+                onClick={() => setReportOpen(true)}
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground/80"
+              >
+                <Flag className="size-3.5" />
+                Report
+              </button>
+            )}
           </div>
         )}
       </div>
+      {reportOpen && (
+        <ReportDialog
+          targetType="comment"
+          targetId={comment.id}
+          title="this comment"
+          onClose={() => setReportOpen(false)}
+        />
+      )}
     </div>
   );
 }

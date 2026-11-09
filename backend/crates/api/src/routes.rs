@@ -5,10 +5,10 @@ use axum::{Extension, Json};
 use uuid::Uuid;
 
 use auth::encode_token;
-use db::{analytics, channels, comments, history, likes, notifications, playlists, subscriptions, users, videos, watch_later};
+use db::{analytics, channels, comments, history, likes, notifications, playlists, reports, subscriptions, users, videos, watch_later};
 use domain::{
     CommentCreate, CommentUpdate, DurationFilter, HistoryQuery, JwtClaims, LoginRequest,
-    PlaylistCreate, PlaylistItemAdd, PlaylistUpdate, RegisterRequest, SearchSort,
+    PlaylistCreate, PlaylistItemAdd, PlaylistUpdate, RegisterRequest, ReportCreate, SearchSort,
     SubscribeRequest, TokenResponse, UploadDateFilter, User, Video, VideoCreate, VideoStatus,
     VideoVisibility,
 };
@@ -1093,6 +1093,48 @@ pub async fn change_password(
         .await?
         .ok_or(ApiError::NotFound)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST /api/reports — report a video or comment for moderation.
+pub async fn create_report(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Json(req): Json<ReportCreate>,
+) -> Result<StatusCode, ApiError> {
+    let target_type = req.target_type.trim().to_lowercase();
+    if target_type != "video" && target_type != "comment" {
+        return Err(ApiError::BadRequest("targetType must be 'video' or 'comment'".into()));
+    }
+    if req.reason.trim().is_empty() {
+        return Err(ApiError::BadRequest("reason is required".into()));
+    }
+
+    // You can't report your own content.
+    if target_type == "video" {
+        let vrows = videos::find_by_id_all(&state.db, &[req.target_id]).await?;
+        let video = match vrows.first() {
+            Some(v) => v,
+            None => return Err(ApiError::NotFound),
+        };
+        let channel = channels::find_by_id(&state.db, video.channel_id)
+            .await?
+            .ok_or(ApiError::NotFound)?;
+        if channel.user_id == claims.sub {
+            return Err(ApiError::BadRequest("you cannot report your own video".into()));
+        }
+    } else {
+        let comment = comments::find_by_id(&state.db, req.target_id)
+            .await?
+            .ok_or(ApiError::NotFound)?;
+        if comment.user_id == claims.sub {
+            return Err(ApiError::BadRequest("you cannot report your own comment".into()));
+        }
+    }
+
+    let detail = req.detail.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    reports::create(&state.db, claims.sub, &target_type, req.target_id, req.reason.trim(), detail)
+        .await?;
+    Ok(StatusCode::CREATED)
 }
 
 /// GET /api/history
