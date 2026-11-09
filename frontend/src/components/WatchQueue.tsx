@@ -12,7 +12,7 @@ import type { Video } from "@/lib/types";
  * remove / reorder / clear controls. The first item is the next to play.
  */
 export default function WatchQueue({ currentVideoId }: { currentVideoId: string }) {
-  const { queue, removeFromQueue, clear } = useWatchQueue();
+  const { queue, removeFromQueue, clear, autoplay, setAutoplay } = useWatchQueue();
   const [open, setOpen] = useState(true);
 
   if (queue.length === 0) return null;
@@ -40,6 +40,24 @@ export default function WatchQueue({ currentVideoId }: { currentVideoId: string 
         >
           <Trash2 className="size-3.5" />
           Clear
+        </button>
+      </div>
+      <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+        <span className="text-sm font-medium">Autoplay</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={autoplay}
+          onClick={() => setAutoplay(!autoplay)}
+          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+            autoplay ? "bg-green-600" : "bg-zinc-600"
+          }`}
+        >
+          <span
+            className={`inline-block size-4 transform rounded-full bg-white shadow transition-transform ${
+              autoplay ? "translate-x-[18px]" : "translate-x-0.5"
+            }`}
+          />
         </button>
       </div>
 

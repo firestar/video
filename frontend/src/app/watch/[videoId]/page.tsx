@@ -136,11 +136,12 @@ function WatchContent() {
   }, [videoId]);
 
   const router = useRouter();
-  const { shift } = useWatchQueue();
+  const { shift, autoplay } = useWatchQueue();
   const handleEnded = useCallback(() => {
+    if (!autoplay) return;
     const next = shift();
     if (next) router.push(`/watch/${next.video.id}`);
-  }, [shift, router]);
+  }, [shift, router, autoplay]);
 
   useEffect(() => {
     if (!videoId) return;

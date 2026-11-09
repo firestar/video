@@ -30,11 +30,15 @@ interface WatchQueueValue {
   clear: () => void;
   /** Whether a given video is already in the queue. */
   isInQueue: (videoId: string) => boolean;
+  /** Whether the next queued video auto-plays when the current one ends. */
+  autoplay: boolean;
+  setAutoplay: (v: boolean) => void;
 }
 
 const WatchQueueContext = createContext<WatchQueueValue | null>(null);
 
 const STORAGE_KEY = "yt-clone-watch-queue";
+const AUTOPLAY_KEY = "yt-clone-autoplay";
 
 function loadQueue(): QueueItem[] {
   if (typeof window === "undefined") return [];
@@ -55,10 +59,17 @@ function loadQueue(): QueueItem[] {
 export function WatchQueueProvider({ children }: { children: ReactNode }) {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [hydrated, setHydrated] = useState(false);
+  const [autoplay, setAutoplayState] = useState(true);
 
   // Hydrate from localStorage once on mount (avoids SSR mismatch).
   useEffect(() => {
     setQueue(loadQueue());
+    try {
+      const raw = window.localStorage.getItem(AUTOPLAY_KEY);
+      if (raw !== null) setAutoplayState(raw === "true");
+    } catch {
+      // ignore
+    }
     setHydrated(true);
   }, []);
 
@@ -71,6 +82,15 @@ export function WatchQueueProvider({ children }: { children: ReactNode }) {
       // ignore quota / privacy-mode errors
     }
   }, [queue, hydrated]);
+
+  const setAutoplay = useCallback((v: boolean) => {
+    setAutoplayState(v);
+    try {
+      window.localStorage.setItem(AUTOPLAY_KEY, String(v));
+    } catch {
+      // ignore quota / privacy-mode errors
+    }
+  }, []);
 
   const addToQueue = useCallback((video: Video) => {
     if (queue.some((it) => it.video.id === video.id)) return false;
@@ -100,8 +120,8 @@ export function WatchQueueProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo<WatchQueueValue>(
-    () => ({ queue, addToQueue, removeFromQueue, shift, clear, isInQueue }),
-    [queue, addToQueue, removeFromQueue, shift, clear, isInQueue]
+    () => ({ queue, addToQueue, removeFromQueue, shift, clear, isInQueue, autoplay, setAutoplay }),
+    [queue, addToQueue, removeFromQueue, shift, clear, isInQueue, autoplay, setAutoplay]
   );
 
   return (
