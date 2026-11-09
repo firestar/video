@@ -132,13 +132,36 @@ export default function ShortsPage() {
     itemRefs.current.forEach((el) => el && observer.observe(el));
     return () => observer.disconnect();
   }, [shorts]);
+  // Focus the feed once it's rendered so keyboard navigation works.
+  useEffect(() => {
+    if (shorts.length > 0) containerRef.current?.focus();
+  }, [shorts.length]);
+
+  // Keyboard navigation: move one short at a time (arrows / PageUp / PageDown).
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const el = containerRef.current;
+    if (!el) return;
+    const step = el.clientHeight;
+    if (e.key === "ArrowDown" || e.key === "PageDown") {
+      e.preventDefault();
+      el.scrollBy({ top: step, behavior: "smooth" });
+    } else if (e.key === "ArrowUp" || e.key === "PageUp") {
+      e.preventDefault();
+      el.scrollBy({ top: -step, behavior: "smooth" });
+    }
+  };
 
   if (error) return <div className="py-24 text-center text-destructive">{error}</div>;
   if (shorts.length === 0)
     return <div className="py-24 text-center text-muted-foreground">No shorts yet.</div>;
 
   return (
-    <div ref={containerRef} className="h-[100dvh] snap-y snap-mandatory overflow-y-auto">
+    <div
+      ref={containerRef}
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      className="h-[calc(100dvh-88px)] sm:h-[calc(100dvh-104px)] snap-y snap-mandatory overflow-y-auto overscroll-contain focus:outline-none"
+    >
       {shorts.map((s, i) => (
         <div
           key={s.id}
