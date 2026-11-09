@@ -201,6 +201,24 @@ function WatchContent() {
     };
   }, [videoId]);
 
+  // Poll while the video is still processing so the page updates once it's ready.
+  useEffect(() => {
+    if (!videoId) return;
+    if (!data || data.video.status === "ready") return;
+    const id = setInterval(async () => {
+      try {
+        const d = await apiFetch<WatchData>(`/api/videos/${videoId}`);
+        setData(d);
+        setLikeCount(d.video.likeCount ?? 0);
+        setDislikeCount(d.video.dislikeCount ?? 0);
+        setViewCount(d.video.viewCount ?? 0);
+        if (d.video.status === "ready") clearInterval(id);
+      } catch {
+        // ignore transient errors; keep polling
+      }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [videoId, data?.video.status]);
   // Resume from a ?t= param (e.g. history "watched to" position).
   useEffect(() => {
     const t = Number(searchParams.get("t"));
