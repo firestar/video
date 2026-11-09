@@ -161,7 +161,7 @@ function ChannelContent() {
             )}
             <div className="space-y-1 pt-2 text-muted-foreground">
               <div><span className="font-medium text-foreground">{count.toLocaleString()}</span> subscribers</div>
-              <div><span className="font-medium text-foreground">{(data.videoCount ?? 0).toLocaleString()}</span> videos</div>
+              <div><span className="font-medium text-foreground">{(data.videoCount ?? 0).toLocaleString()}</span> {(data.videoCount ?? 0) === 1 ? "video" : "videos"}</div>
               <div><span className="font-medium text-foreground">{formatCount(data.totalViews ?? 0)}</span> total views</div>
               <div>Joined {formatDate(channel.createdAt)}</div>
             </div>
