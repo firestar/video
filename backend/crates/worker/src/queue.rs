@@ -69,6 +69,20 @@ impl JobQueue {
         }
     }
 
+    /// Enqueue a job (LPUSH).
+    ///
+    /// Same list and payload shape as the API's upload route, so recovery
+    /// jobs are indistinguishable from fresh uploads.
+    pub async fn enqueue(&self, job: &TranscodeJob) -> anyhow::Result<()> {
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
+        redis::cmd("LPUSH")
+            .arg(&self.list)
+            .arg(serde_json::to_string(job)?)
+            .query_async::<()>(&mut conn)
+            .await?;
+        Ok(())
+    }
+
     /// Publish a message to a channel (fire-and-forget).
     pub async fn publish(&self, channel: &str, message: &str) -> anyhow::Result<()> {
         let mut conn = self.client.get_multiplexed_async_connection().await?;
@@ -82,7 +96,7 @@ impl JobQueue {
 }
 
 /// Decode a queue payload into a job.
-fn parse_job(payload: &str) -> anyhow::Result<TranscodeJob> {
+pub(crate) fn parse_job(payload: &str) -> anyhow::Result<TranscodeJob> {
     serde_json::from_str(payload).map_err(|e| anyhow::anyhow!("bad job payload {payload:?}: {e}"))
 }
 

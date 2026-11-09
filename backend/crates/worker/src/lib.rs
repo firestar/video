@@ -7,6 +7,7 @@
 mod config;
 mod jobs;
 mod queue;
+mod recovery;
 
 pub use config::WorkerConfig;
 
@@ -80,6 +81,22 @@ pub async fn run(state: WorkerState) -> anyhow::Result<()> {
         }
     });
 
+    // Startup recovery: re-enqueue videos stuck in `processing` — their job
+    // was BRPOP'd by a worker instance that died mid-pipeline, so the Redis
+    // list no longer holds it. Duplicates (a job still in the list at death)
+    // are skipped at pop time by the status guard in jobs::process.
+    match db::videos::find_processing(&state.db).await {
+        Ok(rows) if !rows.is_empty() => {
+            for job in recovery::jobs(&rows) {
+                if let Err(e) = queue.enqueue(&job).await {
+                    warn!(video_id = %job.video_id, error = ?e, "recovery enqueue failed");
+                }
+            }
+            info!(recovered = rows.len(), "re-enqueued stuck processing videos");
+        }
+        Ok(_) => {}
+        Err(e) => warn!(error = ?e, "startup recovery scan failed"),
+    }
     loop {
         match queue.pop().await {
             Ok(Some(job)) => {

@@ -177,6 +177,27 @@ pub async fn find_by_id_all(
     q.fetch_all(pool).await
 }
 
+/// A video row still in `processing` (worker startup-recovery input).
+#[derive(Debug, Clone, FromRow)]
+pub struct ProcessingVideo {
+    pub id: Uuid,
+    pub object_key: String,
+}
+
+/// All videos still in `processing`.
+///
+/// Worker startup recovery uses this: a job is consumed (BRPOP) from the
+/// Redis list the moment a worker picks it up, so if that worker instance
+/// dies mid-pipeline the message is gone and the row would stay
+/// `processing` forever. Re-enqueueing these rows on startup fixes that.
+pub async fn find_processing(pool: &Pool) -> Result<Vec<ProcessingVideo>, sqlx::Error> {
+    sqlx::query_as(
+        r#"SELECT id, object_key FROM videos WHERE status = 'processing'"#,
+    )
+    .fetch_all(pool)
+    .await
+}
+
 /// Worker finalization: set status, duration, size, thumbnail, publish time,
 /// the multi-quality `streams` array, and (optionally) the canonical
 /// `object_key` (the worker points it at the top-quality transcode output).

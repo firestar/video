@@ -277,6 +277,21 @@ pub async fn process(
     job: &TranscodeJob,
 ) -> anyhow::Result<()> {
     let max = state.config.max_retries.max(1);
+    // Pop-time guard: skip jobs whose video is no longer `processing`
+    // (already finalized by an earlier or duplicate job, or deleted).
+    // This is what makes startup-recovery duplicates harmless.
+    match videos::find_by_id(&state.db, job.video_id).await {
+        Ok(Some(row)) if row.status == "processing" => {}
+        Ok(Some(row)) => {
+            info!(video_id = %job.video_id, status = %row.status, "skipping job (video no longer processing)");
+            return Ok(());
+        }
+        Ok(None) => {
+            info!(video_id = %job.video_id, "skipping job (video row missing)");
+            return Ok(());
+        }
+        Err(e) => return Err(anyhow::anyhow!("db status check: {e}")),
+    }
     let mut last_err: Option<String> = None;
 
     for attempt in 1..=max {
