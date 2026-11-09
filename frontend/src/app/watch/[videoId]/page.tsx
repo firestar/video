@@ -1,6 +1,6 @@
 "use client";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { apiFetch, getToken } from "@/lib/api";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,7 @@ const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 function WatchContent() {
   const params = useParams<{ videoId: string }>();
   const videoId = params?.videoId ?? "";
+  const searchParams = useSearchParams();
   const { user } = useAuth();
 
   const [data, setData] = useState<WatchData | null>(null);
@@ -144,18 +145,25 @@ function WatchContent() {
 
   const viewedRef = useRef(false);
   const historySentRef = useRef(false);
+  const lastPosRef = useRef(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const playerRef = useRef<HTMLDivElement>(null);
+  const pendingSeekRef = useRef<number | null>(null);
+  const sendHistory = useCallback(
+    (positionSecs: number) => {
+      if (!videoId || !getToken() || positionSecs < 30) return;
+      apiFetch("/api/history", {
+        method: "POST",
+        body: JSON.stringify({ videoId, positionSecs: Math.floor(positionSecs) }),
+      }).catch(() => {});
+    },
+    [videoId]
+  );
   const recordHistory = useCallback(() => {
-    if (historySentRef.current || !videoId || !getToken()) return;
+    if (historySentRef.current) return;
     historySentRef.current = true;
-    apiFetch("/api/history", {
-      method: "POST",
-      body: JSON.stringify({ videoId, positionSecs: 30 }),
-    }).catch(() => {
-      historySentRef.current = false;
-    });
-  }, [videoId]);
+    sendHistory(lastPosRef.current);
+  }, [sendHistory]);
 
   const router = useRouter();
   const { shift, autoplay } = useWatchQueue();
@@ -186,10 +194,18 @@ function WatchContent() {
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
     return () => {
+      sendHistory(lastPosRef.current);
       viewedRef.current = false;
       historySentRef.current = false;
+      lastPosRef.current = 0;
     };
   }, [videoId]);
+
+  // Resume from a ?t= param (e.g. history "watched to" position).
+  useEffect(() => {
+    const t = Number(searchParams.get("t"));
+    if (Number.isFinite(t) && t > 0) pendingSeekRef.current = t;
+  }, [searchParams]);
 
   const streams = data?.streams ?? [];
   const chapters = data?.chapters ?? [];
@@ -439,9 +455,17 @@ function WatchContent() {
                  ref={videoRef}
                  autoPlay
                  muted
-                 controls
+                  controls
+                  onLoadedMetadata={(e) => {
+                    const seek = pendingSeekRef.current;
+                    if (seek != null) {
+                      e.currentTarget.currentTime = seek;
+                      pendingSeekRef.current = null;
+                    }
+                  }}
                   onTimeUpdate={(e) => {
                     const t = e.currentTarget.currentTime;
+                    lastPosRef.current = t;
                     if (t > 30) recordHistory();
                     const chs = data?.chapters ?? [];
                     if (chs.length > 0) {
@@ -608,7 +632,7 @@ function WatchContent() {
               {subHint && <span className="text-xs text-destructive">{subHint}</span>}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <div className="flex items-center rounded-full border border-border">
                 <button
                   onClick={toggleLike}
@@ -704,7 +728,7 @@ function WatchContent() {
                  <Flag className="size-4" />
                  Report
                </button>
-              <div className="ml-2 text-sm text-muted-foreground">
+               <div className="ml-2 shrink-0 whitespace-nowrap text-sm text-muted-foreground">
                 {formatCount(viewCount)} views · {formatDate(video.publishedAt ?? video.createdAt)}
               </div>
             </div>

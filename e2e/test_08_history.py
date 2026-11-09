@@ -21,6 +21,19 @@ def run(ctx: Ctx):
         ctx.check("history watchedUntilSecs recorded", item.get("watchedUntilSecs") == 42,
                   f"watchedUntilSecs={item.get('watchedUntilSecs')}")
 
+    # Re-recording a later position for the same video must UPDATE the stored
+    # position (upsert), not duplicate the row or keep the stale value — this is
+    # what makes "resume where you left off" track the latest position.
+    s, body = c.post("/api/history", token=viewer["token"], body={"videoId": vid, "positionSecs": 90})
+    ctx.check("re-record history (later position) -> 204", s == 204, f"got {s}: {body}")
+    s, h = c.get("/api/history", token=viewer["token"])
+    items = [x for x in h if x.get("videoId") == vid] if isinstance(h, list) else []
+    ctx.check("history has exactly one row per video", len(items) == 1,
+              f"rows={len(items)}")
+    if items:
+        ctx.check("history position updated to latest", items[0].get("watchedUntilSecs") == 90,
+                  f"watchedUntilSecs={items[0].get('watchedUntilSecs')}")
+
     # record a view (increments view count)
     s, body = c.post(f"/api/videos/{vid}/view", token=viewer["token"])
     ctx.check("record view -> 204", s == 204, f"got {s}: {body}")

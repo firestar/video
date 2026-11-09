@@ -92,7 +92,11 @@ function HistoryContent() {
           {entries?.map((entry) => (
             <li key={entry.videoId}>
               <a
-                href={`/watch/${entry.videoId}`}
+                href={
+                  entry.watchedUntilSecs > 0
+                    ? `/watch/${entry.videoId}?t=${entry.watchedUntilSecs}`
+                    : `/watch/${entry.videoId}`
+                }
                 className="flex items-center gap-4 rounded-lg p-2 hover:bg-muted"
               >
                 <div className="flex aspect-video h-14 w-24 shrink-0 items-center justify-center overflow-hidden rounded bg-muted">
