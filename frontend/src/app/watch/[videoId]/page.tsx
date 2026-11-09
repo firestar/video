@@ -8,7 +8,7 @@ import { formatCount, formatDate, formatDuration } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import CommentSection from "@/components/CommentSection";
 import ReportDialog from "@/components/ReportDialog";
-import { Bell, BellOff, ThumbsUp, ThumbsDown, SlidersHorizontal, Check, ListVideo, Plus, Share2, Repeat, Gauge, Clock, RectangleHorizontal, Flag } from "lucide-react";
+import { Bell, BellOff, ThumbsUp, ThumbsDown, SlidersHorizontal, Check, ListVideo, Plus, Share2, Repeat, Gauge, Clock, RectangleHorizontal, Flag, X } from "lucide-react";
 import RelatedVideos from "@/components/RelatedVideos";
 import WatchQueue from "@/components/WatchQueue";
 import { useWatchQueue, WatchQueueProvider } from "@/lib/watch-queue";
@@ -61,6 +61,9 @@ function WatchContent() {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [addedTo, setAddedTo] = useState<Set<string>>(new Set());
   const [playlistBusy, setPlaylistBusy] = useState(false);
+  const [newPlaylistOpen, setNewPlaylistOpen] = useState(false);
+  const [newPlaylistTitle, setNewPlaylistTitle] = useState("");
+  const [newPlaylistBusy, setNewPlaylistBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const shareVideo = useCallback(async () => {
     const url = `${window.location.origin}/watch/${videoId}`;
@@ -112,6 +115,32 @@ function WatchContent() {
         // ignore; menu stays open
       } finally {
         setPlaylistBusy(false);
+      }
+    },
+    [videoId]
+  );
+  const createPlaylistAndAdd = useCallback(
+    async (title: string) => {
+      const t = title.trim();
+      if (!videoId || !t) return;
+      setNewPlaylistBusy(true);
+      try {
+        const created = await apiFetch<Playlist>("/api/playlists", {
+          method: "POST",
+          body: JSON.stringify({ title: t }),
+        });
+        setPlaylists((ps) => [created, ...ps]);
+        setAddedTo((s) => new Set(s).add(created.id));
+        await apiFetch<{ added: boolean }>(`/api/playlists/${created.id}/items`, {
+          method: "POST",
+          body: JSON.stringify({ videoId }),
+        });
+        setNewPlaylistOpen(false);
+        setNewPlaylistTitle("");
+      } catch {
+        // ignore; form stays open
+      } finally {
+        setNewPlaylistBusy(false);
       }
     },
     [videoId]
@@ -707,6 +736,51 @@ function WatchContent() {
                     <div className="border-b border-border px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                       Save to playlist
                     </div>
+                     <div className="border-b border-border p-2">
+                       {newPlaylistOpen ? (
+                         <form
+                           onSubmit={(e) => {
+                             e.preventDefault();
+                             createPlaylistAndAdd(newPlaylistTitle);
+                           }}
+                           className="flex items-center gap-1.5"
+                         >
+                           <input
+                             autoFocus
+                             value={newPlaylistTitle}
+                             onChange={(e) => setNewPlaylistTitle(e.target.value)}
+                             onKeyDown={(e) => {
+                               if (e.key === "Escape") setNewPlaylistOpen(false);
+                             }}
+                             placeholder="New playlist name"
+                             className="h-8 min-w-0 flex-1 rounded border border-border bg-background px-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+                           />
+                           <button
+                             type="submit"
+                             disabled={newPlaylistBusy || newPlaylistTitle.trim() === ""}
+                             className="h-8 shrink-0 rounded bg-primary px-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-default disabled:opacity-50"
+                           >
+                             {newPlaylistBusy ? "…" : "Create"}
+                           </button>
+                           <button
+                             type="button"
+                             onClick={() => setNewPlaylistOpen(false)}
+                             aria-label="Cancel new playlist"
+                             className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted"
+                           >
+                             <X className="size-4" />
+                           </button>
+                         </form>
+                       ) : (
+                         <button
+                           onClick={() => setNewPlaylistOpen(true)}
+                           className="flex w-full items-center gap-2 rounded px-1.5 py-1.5 text-left text-sm hover:bg-muted"
+                         >
+                           <Plus className="size-4 shrink-0 text-muted-foreground" />
+                           <span className="font-medium">New playlist</span>
+                         </button>
+                       )}
+                     </div>
                     {playlists.length === 0 ? (
                       <div className="px-3 py-3 text-sm text-muted-foreground">
                         No playlists yet.

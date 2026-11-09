@@ -1,7 +1,8 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { apiFetch } from "@/lib/api";
+import { ThumbsUp, MessageCircle, Share2, Check } from "lucide-react";
+import { apiFetch, getToken } from "@/lib/api";
 
 interface ShortItem {
   id: string;
@@ -31,6 +32,9 @@ function ShortCard({ short, active }: { short: ShortItem; active: boolean }) {
   const [src, setSrc] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [liked, setLiked] = useState(false);
+  const [likeCount, setLikeCount] = useState(short.likeCount);
+  const [copied, setCopied] = useState(false);
 
   // Lazily fetch the stream URLs when this card first becomes active.
   useEffect(() => {
@@ -60,6 +64,35 @@ function ShortCard({ short, active }: { short: ShortItem; active: boolean }) {
     else el.pause();
   }, [active, src]);
 
+  const toggleLike = useCallback(async () => {
+    const next = !liked;
+    const prev = likeCount;
+    setLiked(next);
+    setLikeCount(next ? prev + 1 : Math.max(0, prev - 1));
+    if (!getToken()) {
+      setLiked(!next);
+      setLikeCount(prev);
+      return;
+    }
+    try {
+      await apiFetch(`/api/videos/${short.id}/like`, { method: next ? "POST" : "DELETE" });
+    } catch {
+      setLiked(!next);
+      setLikeCount(prev);
+    }
+  }, [liked, likeCount, short.id]);
+
+  const share = useCallback(async () => {
+    const url = `${window.location.origin}/watch/${short.id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      window.prompt("Copy this link:", url);
+    }
+  }, [short.id]);
+
   return (
     <div className="relative flex h-full w-full items-center justify-center bg-black">
       {src ? (
@@ -82,7 +115,7 @@ function ShortCard({ short, active }: { short: ShortItem; active: boolean }) {
           <p className="text-sm">Loading…</p>
         </div>
       )}
-      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-4 text-white">
+      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-4 pr-20 text-white">
         <Link href={`/watch/${short.id}`} data-testid="short-title" className="text-lg font-semibold hover:underline">
           {short.title}
         </Link>
@@ -94,6 +127,38 @@ function ShortCard({ short, active }: { short: ShortItem; active: boolean }) {
           <span>· {formatViews(short.viewCount)} views</span>
         </div>
       </div>
+      {/* Right action rail — shown on the active card. */}
+      {active && (
+        <div className="absolute bottom-24 right-3 flex flex-col items-center gap-5">
+          <button
+            onClick={toggleLike}
+            aria-pressed={liked}
+            aria-label="Like short"
+            className="flex flex-col items-center gap-1 text-white"
+          >
+            <span
+              className={`flex h-11 w-11 items-center justify-center rounded-full transition-colors ${
+                liked ? "bg-white text-black" : "bg-white/20 backdrop-blur hover:bg-white/30"
+              }`}
+            >
+              <ThumbsUp className="size-5" />
+            </span>
+            <span className="text-xs font-medium">{formatViews(likeCount)}</span>
+          </button>
+          <Link href={`/watch/${short.id}`} className="flex flex-col items-center gap-1 text-white">
+            <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/20 backdrop-blur hover:bg-white/30">
+              <MessageCircle className="size-5" />
+            </span>
+            <span className="text-xs font-medium">Comment</span>
+          </Link>
+          <button onClick={share} aria-label="Share short" className="flex flex-col items-center gap-1 text-white">
+            <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/20 backdrop-blur hover:bg-white/30">
+              {copied ? <Check className="size-5" /> : <Share2 className="size-5" />}
+            </span>
+            <span className="text-xs font-medium">{copied ? "Copied!" : "Share"}</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -151,31 +216,47 @@ export default function ShortsPage() {
     }
   };
 
-  if (error) return <div className="py-24 text-center text-destructive">{error}</div>;
+  const heading = <h1 className="mb-3 shrink-0 text-2xl font-semibold">Shorts</h1>;
+
+  if (error)
+    return (
+      <div>
+        {heading}
+        <div className="py-24 text-center text-destructive">{error}</div>
+      </div>
+    );
   if (shorts.length === 0)
-    return <div className="py-24 text-center text-muted-foreground">No shorts yet.</div>;
+    return (
+      <div>
+        {heading}
+        <div className="py-24 text-center text-muted-foreground">No shorts yet.</div>
+      </div>
+    );
 
   return (
-    <div
-      ref={containerRef}
-      data-testid="shorts-feed"
-      tabIndex={0}
-      onKeyDown={handleKeyDown}
-      className="h-[calc(100dvh-88px)] sm:h-[calc(100dvh-104px)] snap-y snap-mandatory overflow-y-auto overscroll-contain focus:outline-none"
-    >
-      {shorts.map((s, i) => (
-        <div
-          key={s.id}
-          data-idx={i}
-          data-testid="short-card"
-          ref={(el) => {
-            itemRefs.current[i] = el;
-          }}
-          className="h-full w-full snap-start"
-        >
-          <ShortCard short={s} active={i === activeIdx} />
-        </div>
-      ))}
+    <div>
+      {heading}
+      <div
+        ref={containerRef}
+        data-testid="shorts-feed"
+        tabIndex={0}
+        onKeyDown={handleKeyDown}
+        className="h-[calc(100dvh-132px)] sm:h-[calc(100dvh-148px)] snap-y snap-mandatory overflow-y-auto overscroll-contain focus:outline-none"
+      >
+        {shorts.map((s, i) => (
+          <div
+            key={s.id}
+            data-idx={i}
+            data-testid="short-card"
+            ref={(el) => {
+              itemRefs.current[i] = el;
+            }}
+            className="h-full w-full snap-start"
+          >
+            <ShortCard short={s} active={i === activeIdx} />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
