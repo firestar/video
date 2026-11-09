@@ -202,6 +202,14 @@ pub async fn register(
     if let Err(e) = req.validate() {
         return Err(ApiError::BadRequest(e));
     }
+    // Friendly message for the only conflict left at sign-up: a duplicate
+    // email. (Name collisions are fine now — the channel handle gets a
+    // suffix instead.) The DB constraint still backstops the race.
+    if users::find_by_email(&state.db, &req.email).await?.is_some() {
+        return Err(ApiError::Conflict(
+            "an account with this email already exists".into(),
+        ));
+    }
     let hash = auth::hash_password(&req.password)?;
     let row = users::create(&state.db, &req, &hash).await?;
     let user = User::from(row);

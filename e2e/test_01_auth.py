@@ -19,6 +19,13 @@ def run(ctx: Ctx):
         "password": "TestPass123!", "channelName": "Dup"})
     ctx.check("duplicate email -> 409", s == 409, f"got {s}: {body}")
 
+    # duplicate name -> allowed (200); names may repeat, the channel
+    # handle gets a suffix instead (regression: used to 409 and block sign-up)
+    s, me = c.post("/api/auth/register", body={
+        "name": f"Auth User {run_id}", "email": f"auth-dup-{run_id}@test.local",
+        "password": "TestPass123!", "channelName": f"Auth Channel {run_id}"})
+    ctx.check("duplicate name -> 200 (names may repeat)", s == 200 and "token" in me,
+              f"got {s}: {me}")
     # weak password -> 400
     s, body = c.post("/api/auth/register", body={
         "name": "Weak", "email": f"weak-{run_id}@test.local",

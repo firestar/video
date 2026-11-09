@@ -47,6 +47,11 @@ fn row_to_user(row: sqlx::postgres::PgRow) -> Result<UserRow, sqlx::Error> {
 }
 
 /// Insert a new user and their channel in one transaction.
+///
+/// The display name may collide with an existing one (YouTube-style —
+/// names are not unique). The channel handle must stay unique, so when
+/// the desired handle is taken we append a numeric suffix (name, name1,
+/// name2, …) until the insert succeeds.
 pub async fn create(
     pool: &Pool,
     req: &RegisterRequest,
@@ -69,17 +74,34 @@ pub async fn create(
         .await?,
     )?;
 
-    sqlx::query(
-        r#"
-        INSERT INTO channels (user_id, name, handle)
-        VALUES ($1, $2, $3)
-        "#,
-    )
-    .bind(user.id)
-    .bind(&req.channel_name)
-    .bind(&req.channel_name)
-    .execute(&mut *tx)
-    .await?;
+    let mut handle = req.channel_name.clone();
+    let mut suffix: u32 = 0;
+    loop {
+        match sqlx::query(
+            r#"
+            INSERT INTO channels (user_id, name, handle)
+            VALUES ($1, $2, $3)
+            "#,
+        )
+        .bind(user.id)
+        .bind(&req.channel_name)
+        .bind(&handle)
+        .execute(&mut *tx)
+        .await
+        {
+            Ok(_) => break,
+            Err(sqlx::Error::Database(db)) if db.code().as_deref() == Some("23505") => {
+                suffix += 1;
+                if suffix > 100 {
+                    return Err(sqlx::Error::Protocol(
+                        "too many channel handle collisions".into(),
+                    ));
+                }
+                handle = format!("{}{}", req.channel_name, suffix);
+            }
+            Err(e) => return Err(e),
+        }
+    }
 
     tx.commit().await?;
     Ok(user)
