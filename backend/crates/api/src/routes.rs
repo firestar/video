@@ -700,6 +700,8 @@ pub async fn create_comment(
         domain::CommentError::NotTopLevel => ApiError::BadRequest("can only reply to top-level comments".into()),
         domain::CommentError::Db(e) => ApiError::Internal(anyhow::anyhow!("comment insert: {e}")),
     })?;
+    // Best-effort: notify the video's channel owner (skipped when the commenter is the owner).
+    let _ = notifications::notify_new_comment(&state.db, id, claims.sub).await;
     Ok((StatusCode::CREATED, Json(row.into())))
 }
 
@@ -1318,7 +1320,11 @@ pub async fn like_video(
     Extension(claims): Extension<JwtClaims>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    let _ = likes::like(&state.db, claims.sub, id, None).await?;
+    let row = likes::like(&state.db, claims.sub, id, None).await?;
+    // Best-effort: notify the owner only when this is a new like (not a re-like).
+    if row.is_some() {
+        let _ = notifications::notify_new_like(&state.db, id, claims.sub).await;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

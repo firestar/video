@@ -43,6 +43,54 @@ pub async fn notify_new_uploads(
     .await?;
     Ok(res.rows_affected() as i64)
 }
+/// Notify the video's channel owner that someone commented on their video.
+/// No-op when the commenter is the owner. Returns rows inserted.
+pub async fn notify_new_comment(
+    pool: &Pool,
+    video_id: Uuid,
+    commenter_id: Uuid,
+) -> Result<i64, sqlx::Error> {
+    let res = sqlx::query(
+        r#"
+        INSERT INTO notifications (user_id, channel_id, video_id, type)
+        SELECT c.user_id, c.id, $1, 'new_comment'
+        FROM videos v
+        JOIN channels c ON c.id = v.channel_id
+        WHERE v.id = $1
+          AND c.user_id != $2
+        "#,
+    )
+    .bind(video_id)
+    .bind(commenter_id)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected() as i64)
+}
+
+/// Notify the video's channel owner that someone liked their video.
+/// No-op when the liker is the owner. Returns rows inserted.
+pub async fn notify_new_like(
+    pool: &Pool,
+    video_id: Uuid,
+    liker_id: Uuid,
+) -> Result<i64, sqlx::Error> {
+    let res = sqlx::query(
+        r#"
+        INSERT INTO notifications (user_id, channel_id, video_id, type)
+        SELECT c.user_id, c.id, $1, 'new_like'
+        FROM videos v
+        JOIN channels c ON c.id = v.channel_id
+        WHERE v.id = $1
+          AND c.user_id != $2
+        "#,
+    )
+    .bind(video_id)
+    .bind(liker_id)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected() as i64)
+}
+
 
 /// Latest notifications for a user (newest first), with channel + video context.
 pub async fn list_for_user(

@@ -37,6 +37,17 @@ function timeAgo(iso: string): string {
   if (days < 7) return `${days}d ago`;
   return new Date(iso).toLocaleDateString();
 }
+function typeText(type: string): string {
+  switch (type) {
+    case "new_comment":
+      return "commented on your video";
+    case "new_like":
+      return "liked your video";
+    case "new_upload":
+    default:
+      return "uploaded a video";
+  }
+}
 
 export default function NotificationsBell() {
   const { user } = useAuth();
@@ -189,7 +200,7 @@ export default function NotificationsBell() {
                   <div className="min-w-0 flex-1">
                     <div className="text-sm">
                       <span className="font-medium">{n.channelName}</span>{" "}
-                      <span className="text-muted-foreground">uploaded a video</span>
+                      <span className="text-muted-foreground">{typeText(n.type)}</span>
                     </div>
                     {n.videoTitle && (
                       <div className="mt-0.5 truncate text-sm text-foreground/80">
