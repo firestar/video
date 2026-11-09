@@ -7,9 +7,9 @@ use uuid::Uuid;
 use auth::encode_token;
 use db::{channels, comments, history, likes, notifications, playlists, subscriptions, users, videos, watch_later};
 use domain::{
-    CommentCreate, HistoryQuery, JwtClaims, LoginRequest, PlaylistCreate, PlaylistItemAdd,
-    PlaylistUpdate, RegisterRequest, SubscribeRequest, TokenResponse, User, Video, VideoCreate,
-    VideoStatus, VideoVisibility,
+    CommentCreate, DurationFilter, HistoryQuery, JwtClaims, LoginRequest, PlaylistCreate,
+    PlaylistItemAdd, PlaylistUpdate, RegisterRequest, SearchSort, SubscribeRequest, TokenResponse,
+    UploadDateFilter, User, Video, VideoCreate, VideoStatus, VideoVisibility,
 };
 
 use crate::error::ApiError;
@@ -715,13 +715,33 @@ pub async fn search(
         .and_then(|v| v.as_i64())
         .unwrap_or(20)
         .clamp(1, 100);
+    let sort = q
+        .get("sort")
+        .and_then(|v| v.as_str())
+        .and_then(SearchSort::parse)
+        .unwrap_or_default();
+    let duration = q
+        .get("duration")
+        .and_then(|v| v.as_str())
+        .and_then(DurationFilter::parse)
+        .unwrap_or_default();
+    let upload_date = q
+        .get("uploadDate")
+        .and_then(|v| v.as_str())
+        .and_then(UploadDateFilter::parse)
+        .unwrap_or_default();
+    let rtype = q.get("type").and_then(|v| v.as_str()).unwrap_or("all");
 
-    let (video_rows, channel_rows) = tokio::join!(
-        videos::search(&state.db, &term, limit),
-        channels::search(&state.db, &term, limit),
-    );
-    let video_rows = video_rows?;
-    let channel_rows = channel_rows?;
+    let video_rows = if rtype == "channel" {
+        Vec::new()
+    } else {
+        videos::search(&state.db, &term, limit, sort, duration, upload_date).await?
+    };
+    let channel_rows = if rtype == "video" {
+        Vec::new()
+    } else {
+        channels::search(&state.db, &term, limit).await?
+    };
 
     let vids = videos_with_channels(&state.db, &state.storage, &video_rows).await?;
     let chans: Vec<domain::Channel> = channel_rows.into_iter().map(Into::into).collect();

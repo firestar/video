@@ -81,6 +81,71 @@ pub struct Chapter {
     pub title: String,
 }
 
+/// Search sort order.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SearchSort {
+    #[default]
+    Relevance,
+    Date,
+    Views,
+}
+impl SearchSort {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "relevance" => Some(Self::Relevance),
+            "date" => Some(Self::Date),
+            "views" => Some(Self::Views),
+            _ => None,
+        }
+    }
+}
+
+/// Search duration filter.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DurationFilter {
+    #[default]
+    Any,
+    Short,
+    Medium,
+    Long,
+}
+impl DurationFilter {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "any" => Some(Self::Any),
+            "short" => Some(Self::Short),
+            "medium" => Some(Self::Medium),
+            "long" => Some(Self::Long),
+            _ => None,
+        }
+    }
+}
+
+/// Search upload-date recency filter.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum UploadDateFilter {
+    #[default]
+    Any,
+    Hour,
+    Day,
+    Week,
+    Month,
+    Year,
+}
+impl UploadDateFilter {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "any" => Some(Self::Any),
+            "hour" => Some(Self::Hour),
+            "day" => Some(Self::Day),
+            "week" => Some(Self::Week),
+            "month" => Some(Self::Month),
+            "year" => Some(Self::Year),
+            _ => None,
+        }
+    }
+}
+
 /// Parse chapters out of a video description.
 ///
 /// Rules (mirroring YouTube):

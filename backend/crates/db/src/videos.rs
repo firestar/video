@@ -3,7 +3,7 @@
 use uuid::Uuid;
 
 use crate::pool::Pool;
-use domain::{Video, VideoCreate, VideoStatus, VideoVisibility};
+use domain::{DurationFilter, SearchSort, UploadDateFilter, Video, VideoCreate, VideoStatus, VideoVisibility};
 
 use sqlx::FromRow;
 
@@ -341,22 +341,54 @@ pub async fn list_for_channel_all(
 }
 
 /// Full-text search over title/description (ready videos only).
-pub async fn search(pool: &Pool, query: &str, limit: i64) -> Result<Vec<VideoRow>, sqlx::Error> {
-    sqlx::query_as(
-        r#"
-        SELECT * FROM videos
-         WHERE status = 'ready' AND visibility = 'public'
-           AND published_at IS NOT NULL AND published_at <= now()
-           AND search_vector @@ plainto_tsquery('english', $1)
-          AND search_vector @@ plainto_tsquery('english', $1)
-        ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
-        LIMIT $2
-        "#,
-    )
-    .bind(query)
-    .bind(limit)
-    .fetch_all(pool)
-    .await
+pub async fn search(
+    pool: &Pool,
+    query: &str,
+    limit: i64,
+    sort: SearchSort,
+    duration: DurationFilter,
+    upload_date: UploadDateFilter,
+) -> Result<Vec<VideoRow>, sqlx::Error> {
+    let mut where_clauses: Vec<String> = vec![
+        "status = 'ready'".into(),
+        "visibility = 'public'".into(),
+        "published_at IS NOT NULL AND published_at <= now()".into(),
+        "search_vector @@ plainto_tsquery('english', $1)".into(),
+    ];
+    match duration {
+        DurationFilter::Short => where_clauses.push("duration_secs < 240".into()),
+        DurationFilter::Medium => {
+            where_clauses.push("duration_secs >= 240 AND duration_secs <= 1200".into())
+        }
+        DurationFilter::Long => where_clauses.push("duration_secs > 1200".into()),
+        DurationFilter::Any => {}
+    }
+    let interval = match upload_date {
+        UploadDateFilter::Hour => Some("1 hour"),
+        UploadDateFilter::Day => Some("1 day"),
+        UploadDateFilter::Week => Some("7 days"),
+        UploadDateFilter::Month => Some("30 days"),
+        UploadDateFilter::Year => Some("365 days"),
+        UploadDateFilter::Any => None,
+    };
+    if let Some(iv) = interval {
+        where_clauses.push(format!("published_at >= now() - interval '{iv}'"));
+    }
+    let order = match sort {
+        SearchSort::Relevance => "ts_rank(search_vector, plainto_tsquery('english', $1)) DESC",
+        SearchSort::Date => "published_at DESC",
+        SearchSort::Views => "view_count DESC, published_at DESC",
+    };
+    let sql = format!(
+        "SELECT * FROM videos WHERE {} ORDER BY {} LIMIT $2",
+        where_clauses.join(" AND "),
+        order
+    );
+    sqlx::query_as(&sql)
+        .bind(query)
+        .bind(limit)
+        .fetch_all(pool)
+        .await
 }
 
 /// Used by the personalized home feed for the no-history / anonymous case and

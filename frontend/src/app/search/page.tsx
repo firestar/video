@@ -15,19 +15,73 @@ interface SearchData {
   channels: Channel[];
 }
 
+type Sort = "relevance" | "date" | "views";
+type Type = "all" | "video" | "channel";
+type Duration = "any" | "short" | "medium" | "long";
+type UploadDate = "any" | "hour" | "day" | "week" | "month" | "year";
+
+interface FilterOption {
+  value: string;
+  label: string;
+}
+
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: FilterOption[];
+}) {
+  return (
+    <label className="flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="cursor-pointer bg-transparent font-medium outline-none"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function SearchContent() {
   const params = useSearchParams();
   const [q, setQ] = useState("");
   const [data, setData] = useState<SearchData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sort, setSort] = useState<Sort>("relevance");
+  const [type, setType] = useState<Type>("all");
+  const [duration, setDuration] = useState<Duration>("any");
+  const [uploadDate, setUploadDate] = useState<UploadDate>("any");
 
   const query = params.get("q") ?? "";
+
+  const buildUrl = () => {
+    const p = new URLSearchParams();
+    p.set("q", query.trim());
+    p.set("limit", "20");
+    if (sort !== "relevance") p.set("sort", sort);
+    if (type !== "all") p.set("type", type);
+    if (duration !== "any") p.set("duration", duration);
+    if (uploadDate !== "any") p.set("uploadDate", uploadDate);
+    return `/api/search?${p.toString()}`;
+  };
 
   const retry = () => {
     setError(null);
     setLoading(true);
-    apiFetch<SearchData>(`/api/search?q=${encodeURIComponent(query.trim())}&limit=20`)
+    apiFetch<SearchData>(buildUrl())
       .then(setData)
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
@@ -43,13 +97,14 @@ function SearchContent() {
     const t = setTimeout(() => {
       setLoading(true);
       setError(null);
-      apiFetch<SearchData>(`/api/search?q=${encodeURIComponent(term)}&limit=20`)
+      apiFetch<SearchData>(buildUrl())
         .then(setData)
         .catch((e: Error) => setError(e.message))
         .finally(() => setLoading(false));
     }, 300);
     return () => clearTimeout(t);
-  }, [query]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, sort, type, duration, uploadDate]);
 
   useEffect(() => setQ(query), [query]);
 
@@ -67,7 +122,7 @@ function SearchContent() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
-      <div className="mb-6 flex items-center gap-3">
+      <div className="mb-4 flex items-center gap-3">
         <span className="text-lg font-semibold">Search</span>
         <input
           type="search"
@@ -77,6 +132,55 @@ function SearchContent() {
           className="h-10 w-full max-w-md rounded-md border border-border bg-muted/50 px-3 text-sm outline-none"
         />
       </div>
+
+      {query.trim() && (
+        <div className="mb-6 flex flex-wrap items-center gap-2">
+          <FilterSelect
+            label="Sort by"
+            value={sort}
+            onChange={(v) => setSort(v as Sort)}
+            options={[
+              { value: "relevance", label: "Relevance" },
+              { value: "date", label: "Upload date" },
+              { value: "views", label: "View count" },
+            ]}
+          />
+          <FilterSelect
+            label="Type"
+            value={type}
+            onChange={(v) => setType(v as Type)}
+            options={[
+              { value: "all", label: "All" },
+              { value: "video", label: "Video" },
+              { value: "channel", label: "Channel" },
+            ]}
+          />
+          <FilterSelect
+            label="Duration"
+            value={duration}
+            onChange={(v) => setDuration(v as Duration)}
+            options={[
+              { value: "any", label: "Any" },
+              { value: "short", label: "Under 4 min" },
+              { value: "medium", label: "4–20 min" },
+              { value: "long", label: "Over 20 min" },
+            ]}
+          />
+          <FilterSelect
+            label="Upload date"
+            value={uploadDate}
+            onChange={(v) => setUploadDate(v as UploadDate)}
+            options={[
+              { value: "any", label: "Any time" },
+              { value: "hour", label: "Last hour" },
+              { value: "day", label: "Today" },
+              { value: "week", label: "This week" },
+              { value: "month", label: "This month" },
+              { value: "year", label: "This year" },
+            ]}
+          />
+        </div>
+      )}
 
       {loading ? (
         <VideoGridSkeleton count={6} />
@@ -92,7 +196,7 @@ function SearchContent() {
         <EmptyState
           icon={<Search className="size-8 text-muted-foreground" />}
           title={`No results for "${query.trim()}"`}
-          subtitle="Try different keywords."
+          subtitle="Try different keywords or filters."
         />
       ) : data ? (
         <div className="space-y-10">
