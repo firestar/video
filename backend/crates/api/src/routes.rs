@@ -1006,6 +1006,135 @@ pub async fn presign_upload(
         "object_key": object_key,
     })))
 }
+/// Part size for multipart uploads. Kept well under Cloudflare's 100 MB
+/// request-body cap so every part PUT clears the proxy.
+const MULTIPART_PART_SIZE: i64 = 50 * 1024 * 1024; // 50 MB
+/// Max video size for the multipart path (matches the UI's 2 GB claim).
+const MULTIPART_MAX_SIZE: i64 = 2 * 1024 * 1024 * 1024; // 2 GB
+/// Presign TTL for each part (generous: a 2 GB upload can outlast 15 min).
+const MULTIPART_PART_TTL_SECS: u64 = 60 * 60; // 60 min
+
+/// Number of 50 MB parts needed to hold `size` bytes (>= 1).
+fn num_parts_for(size: i64) -> i64 {
+    (size + MULTIPART_PART_SIZE - 1) / MULTIPART_PART_SIZE
+}
+
+/// Decode the Bearer token from the request, returning the claims.
+fn extract_claims(
+    state: &AppState,
+    req: &axum::extract::Request,
+) -> Result<domain::JwtClaims, ApiError> {
+    let token = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|s| s.to_string())
+        .ok_or(ApiError::Unauthorized("missing token".into()))?;
+    auth::decode_token(&state.config.jwt_secret, &token)
+        .map_err(|e| ApiError::Unauthorized(e.to_string()))
+}
+
+/// Read the request body as a JSON value.
+async fn read_json_body(req: axum::extract::Request) -> Result<serde_json::Value, ApiError> {
+    let body: axum::body::Bytes = axum::body::to_bytes(req.into_body(), usize::MAX)
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("body: {e}")))?;
+    serde_json::from_slice(&body).map_err(|e| ApiError::BadRequest(e.to_string()))
+}
+
+/// POST /api/uploads/multipart/init — start a multipart upload and presign
+/// every part. For files that would exceed Cloudflare's 100 MB single-body
+/// cap, the browser uploads the parts individually (each < 100 MB) and then
+/// calls /multipart/complete with the part ETags.
+pub async fn multipart_init(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _claims = extract_claims(&state, &req)?;
+    let body = read_json_body(req).await?;
+    let content_type = body
+        .get("content_type")
+        .or_else(|| body.get("contentType"))
+        .and_then(|v| v.as_str());
+    let size = body.get("size").and_then(|v| v.as_i64()).unwrap_or(0);
+    if size <= 0 {
+        return Err(ApiError::BadRequest("size must be > 0".into()));
+    }
+    if size > MULTIPART_MAX_SIZE {
+        return Err(ApiError::BadRequest("video max 2 GB".into()));
+    }
+    let object_key = format!("videos/{}", Uuid::new_v4());
+    let upload_id = state
+        .storage
+        .create_multipart_upload(&object_key, content_type)
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("storage: {e}")))?;
+    let num_parts = num_parts_for(size);
+    let ttl = std::time::Duration::from_secs(MULTIPART_PART_TTL_SECS);
+    let mut parts = Vec::with_capacity(num_parts as usize);
+    for n in 1..=num_parts {
+        let url = state
+            .storage
+            .presign_put_part(&object_key, &upload_id, n as i32, ttl)
+            .await
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("storage: {e}")))?;
+        parts.push(json!({ "part_number": n, "upload_url": url }));
+    }
+    Ok(Json(json!({
+        "object_key": object_key,
+        "upload_id": upload_id,
+        "part_size": MULTIPART_PART_SIZE,
+        "parts": parts,
+    })))
+}
+
+/// POST /api/uploads/multipart/complete — complete a multipart upload from
+/// the uploaded parts (server-side, with the app's credentials).
+pub async fn multipart_complete(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _claims = extract_claims(&state, &req)?;
+    let body = read_json_body(req).await?;
+    let object_key = body
+        .get("object_key")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| ApiError::BadRequest("object_key required".into()))?;
+    let upload_id = body
+        .get("upload_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| ApiError::BadRequest("upload_id required".into()))?;
+    let parts_arr = body
+        .get("parts")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| ApiError::BadRequest("parts required".into()))?;
+    let mut parts: Vec<(i32, String)> = Vec::with_capacity(parts_arr.len());
+    for p in parts_arr {
+        let n = p
+            .get("part_number")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| ApiError::BadRequest("part_number required".into()))? as i32;
+        let etag = p
+            .get("etag")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| ApiError::BadRequest("etag required".into()))?;
+        parts.push((n, etag.to_string()));
+    }
+    if parts.is_empty() {
+        return Err(ApiError::BadRequest("parts must not be empty".into()));
+    }
+    parts.sort_by_key(|(n, _)| *n);
+    state
+        .storage
+        .complete_multipart_upload(object_key, upload_id, &parts)
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("storage: {e}")))?;
+    Ok(Json(json!({ "completed": true })))
+}
 
 // ---------- Protected routes ----------
 
@@ -1804,4 +1933,25 @@ pub async fn remove_playlist_item(
         "removed": removed,
         "videoCount": count,
     })))
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn num_parts_rounds_up() {
+        let mb = 1024 * 1024;
+        // Exactly one part.
+        assert_eq!(num_parts_for(50 * mb), 1);
+        // One byte over -> two parts.
+        assert_eq!(num_parts_for(50 * mb + 1), 2);
+        // Exactly two parts.
+        assert_eq!(num_parts_for(100 * mb), 2);
+        // 101 MB -> three parts (the Cloudflare-boundary case).
+        assert_eq!(num_parts_for(101 * mb), 3);
+        // 2 GB -> 41 parts (2048 / 50 = 40.96).
+        assert_eq!(num_parts_for(2 * 1024 * mb), 41);
+        // Tiny file -> still one part.
+        assert_eq!(num_parts_for(1), 1);
+    }
 }

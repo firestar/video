@@ -8,7 +8,7 @@ use std::time::Duration;
 use aws_config::{BehaviorVersion, SdkConfig};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::presigning::PresigningConfig;
-use aws_sdk_s3::types::ChecksumAlgorithm;
+use aws_sdk_s3::types::{ChecksumAlgorithm, CompletedMultipartUpload, CompletedPart};
 use aws_sdk_s3::Client;
 use aws_smithy_types::byte_stream::ByteStream;
 use bytes::Bytes;
@@ -87,6 +87,83 @@ impl Storage {
             .await
             .map_err(|e| StorageError::Aws(e.to_string()))?;
         Ok(signed.uri().to_string())
+    }
+    /// Create a multipart upload and return its upload id. The object's
+    /// content type is fixed here (individual parts don't carry it).
+    pub async fn create_multipart_upload(
+        &self,
+        key: &str,
+        content_type: Option<&str>,
+    ) -> Result<String, StorageError> {
+        let mut req = self
+            .client
+            .create_multipart_upload()
+            .bucket(&self.bucket)
+            .key(key);
+        if let Some(ct) = content_type {
+            req = req.content_type(ct);
+        }
+        let out = req
+            .send()
+            .await
+            .map_err(|e| StorageError::Aws(e.to_string()))?;
+        out.upload_id
+            .ok_or_else(|| StorageError::Aws("no upload id returned".into()))
+    }
+
+    /// Generate a presigned PUT URL for one part of a multipart upload.
+    /// The URL carries `uploadId` and `partNumber` as query params, so the
+    /// browser PUTs each part straight to the bucket.
+    pub async fn presign_put_part(
+        &self,
+        key: &str,
+        upload_id: &str,
+        part_number: i32,
+        ttl: Duration,
+    ) -> Result<String, StorageError> {
+        let req = self
+            .client
+            .upload_part()
+            .bucket(&self.bucket)
+            .key(key)
+            .upload_id(upload_id)
+            .part_number(part_number);
+        let config =
+            PresigningConfig::expires_in(ttl).map_err(|e| StorageError::Config(e.to_string()))?;
+        let signed = req
+            .presigned(config)
+            .await
+            .map_err(|e| StorageError::Aws(e.to_string()))?;
+        Ok(signed.uri().to_string())
+    }
+
+    /// Complete a multipart upload from the uploaded parts (server-side call
+    /// with the app's credentials). `parts` is (part_number, etag) pairs.
+    pub async fn complete_multipart_upload(
+        &self,
+        key: &str,
+        upload_id: &str,
+        parts: &[(i32, String)],
+    ) -> Result<(), StorageError> {
+        let completed: Vec<CompletedPart> = parts
+            .iter()
+            .map(|(n, etag)| {
+                CompletedPart::builder()
+                    .part_number(*n)
+                    .e_tag(etag.clone())
+                    .build()
+            })
+            .collect();
+        self.client
+            .complete_multipart_upload()
+            .bucket(&self.bucket)
+            .key(key)
+            .upload_id(upload_id)
+            .multipart_upload(CompletedMultipartUpload::builder().set_parts(Some(completed)).build())
+            .send()
+            .await
+            .map_err(|e| StorageError::Aws(e.to_string()))?;
+        Ok(())
     }
 
     /// Generate a signed GET URL for download/streaming.

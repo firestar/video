@@ -36,6 +36,14 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(routes::presign_upload),
         )
         .route(
+            "/api/uploads/multipart/init",
+            axum::routing::post(routes::multipart_init),
+        )
+        .route(
+            "/api/uploads/multipart/complete",
+            axum::routing::post(routes::multipart_complete),
+        )
+        .route(
             "/api/videos/{id}/related",
             axum::routing::get(routes::get_related_videos),
         )

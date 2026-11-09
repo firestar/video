@@ -9,6 +9,10 @@ import { useAuth } from "@/lib/auth";
 import type { VideoVisibility } from "@/lib/types";
 
 const MAX_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
+// Files larger than this are uploaded via S3 multipart (50 MB parts) so no
+// single request exceeds Cloudflare's 100 MB body cap. Smaller files use a
+// single presigned PUT.
+const MULTIPART_THRESHOLD = 50 * 1024 * 1024; // 50 MB
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -20,6 +24,29 @@ function formatBytes(bytes: number): string {
     u++;
   } while (v >= 1024 && u < units.length - 1);
   return `${v.toFixed(1)} ${units[u]}`;
+}
+/** PUT one Blob to a presigned part URL; resolves with the part's ETag. */
+function putPart(
+  url: string,
+  chunk: Blob,
+  onProgress: (loaded: number) => void
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", url);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(e.loaded);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(xhr.getResponseHeader("ETag") ?? "");
+      } else {
+        reject(new Error(`Part upload failed (HTTP ${xhr.status})`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Part upload failed (network error)"));
+    xhr.send(chunk);
+  });
 }
 
 type Phase = "idle" | "presign" | "uploading" | "creating";
@@ -92,36 +119,80 @@ export default function UploadPage() {
     setError(null);
     setProgress(0);
     try {
-      setPhase("presign");
-      const presign = await apiFetch<{ upload_url: string; object_key: string }>(
-        "/api/uploads/presign",
-        {
+      let objectKey: string;
+      if (file.size > MULTIPART_THRESHOLD) {
+        // Large file: S3 multipart. Each 50 MB part is its own PUT, so every
+        // request stays under Cloudflare's 100 MB body cap.
+        setPhase("presign");
+        const init = await apiFetch<{
+          object_key: string;
+          upload_id: string;
+          part_size: number;
+          parts: { part_number: number; upload_url: string }[];
+        }>("/api/uploads/multipart/init", {
           method: "POST",
           body: JSON.stringify({
             file_name: file.name,
             content_type: file.type,
             size: file.size,
           }),
+        });
+        objectKey = init.object_key;
+        setPhase("uploading");
+        const parts: { part_number: number; etag: string }[] = [];
+        let uploaded = 0;
+        for (const part of init.parts) {
+          const start = (part.part_number - 1) * init.part_size;
+          const end = Math.min(start + init.part_size, file.size);
+          const chunk = file.slice(start, end);
+          const etag = await putPart(part.upload_url, chunk, (loaded) => {
+            setProgress(Math.round(((start + loaded) / file.size) * 100));
+          });
+          uploaded += chunk.size;
+          parts.push({ part_number: part.part_number, etag });
+          setProgress(Math.round((uploaded / file.size) * 100));
         }
-      );
-
-      setPhase("uploading");
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("PUT", presign.upload_url);
-        xhr.setRequestHeader("Content-Type", file.type);
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            setProgress(Math.round((e.loaded / e.total) * 100));
+        await apiFetch("/api/uploads/multipart/complete", {
+          method: "POST",
+          body: JSON.stringify({
+            object_key: init.object_key,
+            upload_id: init.upload_id,
+            parts,
+          }),
+        });
+      } else {
+        // Small file: single presigned PUT (unchanged behavior).
+        setPhase("presign");
+        const presign = await apiFetch<{ upload_url: string; object_key: string }>(
+          "/api/uploads/presign",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              file_name: file.name,
+              content_type: file.type,
+              size: file.size,
+            }),
           }
-        };
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) resolve();
-          else reject(new Error(`Upload failed (HTTP ${xhr.status})`));
-        };
-        xhr.onerror = () => reject(new Error("Upload failed (network error)"));
-        xhr.send(file);
-      });
+        );
+        objectKey = presign.object_key;
+        setPhase("uploading");
+        await new Promise<void>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("PUT", presign.upload_url);
+          xhr.setRequestHeader("Content-Type", file.type);
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              setProgress(Math.round((e.loaded / e.total) * 100));
+            }
+          };
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) resolve();
+            else reject(new Error(`Upload failed (HTTP ${xhr.status})`));
+          };
+          xhr.onerror = () => reject(new Error("Upload failed (network error)"));
+          xhr.send(file);
+        });
+      }
 
       setPhase("creating");
       const created = await apiFetch<{ video: { id: string } }>("/api/videos", {
@@ -133,7 +204,7 @@ export default function UploadPage() {
             .split(",")
             .map((t) => t.trim())
             .filter(Boolean),
-          object_key: presign.object_key,
+          object_key: objectKey,
           visibility,
           isShort,
           ...(schedule === "scheduled"
