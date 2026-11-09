@@ -41,6 +41,12 @@ export interface Video {
   /** Feed reason badge (from /api/home/feed): "trending" | "subscription" | "related". */
   reason?: string;
 }
+/** A chapter parsed from a video description (from GET /api/videos/{id}). */
+export interface Chapter {
+  startSecs: number;
+  title: string;
+}
+
 
 export interface Comment {
   id: string;

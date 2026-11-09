@@ -385,6 +385,11 @@ pub async fn get_video(
         ),
         None => (false, false, false),
     };
+    let chapters = domain::parse_chapters(
+        video.description.as_deref(),
+        &video.title,
+        video.duration_secs.map(|d| d as i64),
+    );
     Ok(Json(serde_json::json!({
         "video": serde_json::to_value(&video).unwrap(),
         "channel": channel,
@@ -393,6 +398,7 @@ pub async fn get_video(
         "hasLiked": has_liked,
         "hasDisliked": has_disliked,
         "inWatchLater": in_watch_later,
+        "chapters": chapters,
         "thumbnailUrl": thumbnail_url.map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
     })))
 }

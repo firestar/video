@@ -4,7 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { apiFetch, getToken } from "@/lib/api";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { formatCount, formatDate } from "@/lib/format";
+import { formatCount, formatDate, formatDuration } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import CommentSection from "@/components/CommentSection";
 import { Bell, BellOff, ThumbsUp, ThumbsDown, SlidersHorizontal, Check, ListVideo, Plus, Share2, Repeat, Gauge, Clock } from "lucide-react";
@@ -12,7 +12,7 @@ import RelatedVideos from "@/components/RelatedVideos";
 import WatchQueue from "@/components/WatchQueue";
 import { useWatchQueue, WatchQueueProvider } from "@/lib/watch-queue";
 import { WatchPageSkeleton } from "@/components/Skeletons";
-import type { Video, Playlist } from "@/lib/types";
+import type { Video, Playlist, Chapter } from "@/lib/types";
 
 interface Stream {
   quality: string;
@@ -30,6 +30,7 @@ interface WatchData {
   hasLiked?: boolean;
   hasDisliked?: boolean;
   inWatchLater?: boolean;
+  chapters: Chapter[];
 }
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
@@ -116,6 +117,7 @@ function WatchContent() {
   const [speed, setSpeed] = useState(1);
   const [loopOn, setLoopOn] = useState(false);
   const [speedMenuOpen, setSpeedMenuOpen] = useState(false);
+  const [activeChapter, setActiveChapter] = useState(0);
   const pendingTimeRef = useRef<number | null>(null);
 
   const viewedRef = useRef(false);
@@ -167,6 +169,11 @@ function WatchContent() {
   }, [videoId]);
 
   const streams = data?.streams ?? [];
+  const chapters = data?.chapters ?? [];
+  const seekToChapter = useCallback((secs: number) => {
+    const el = videoRef.current;
+    if (el) el.currentTime = secs;
+  }, []);
   const activeStream =
     streams.find((s) => s.quality === quality) ?? streams[0] ?? null;
   const currentUrl = activeStream?.url ?? data?.streamUrl ?? null;
@@ -410,9 +417,19 @@ function WatchContent() {
                  autoPlay
                  muted
                  controls
-                 onTimeUpdate={(e) => {
-                   if (e.currentTarget.currentTime > 30) recordHistory();
-                 }}
+                  onTimeUpdate={(e) => {
+                    const t = e.currentTarget.currentTime;
+                    if (t > 30) recordHistory();
+                    const chs = data?.chapters ?? [];
+                    if (chs.length > 0) {
+                      let idx = 0;
+                      for (let i = 0; i < chs.length; i++) {
+                        if (t >= chs[i].startSecs) idx = i;
+                        else break;
+                      }
+                      setActiveChapter(idx);
+                    }
+                  }}
                  onEnded={handleEnded}
                  className="aspect-video w-full rounded-lg bg-black"
                />
@@ -503,6 +520,23 @@ function WatchContent() {
                {video.status === "ready"
                  ? "Stream URL unavailable"
                  : `Video is ${video.status} — not ready to play yet`}
+             </div>
+           )}
+           {chapters.length > 0 && (
+             <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+               {chapters.map((c, i) => (
+                 <button
+                   key={i}
+                   onClick={() => seekToChapter(c.startSecs)}
+                   className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                     i === activeChapter
+                       ? "bg-white text-black"
+                       : "bg-muted text-muted-foreground hover:bg-muted/80"
+                   }`}
+                 >
+                   {formatDuration(c.startSecs)} {c.title}
+                 </button>
+               ))}
              </div>
            )}
           <h1 className="mt-4 text-xl font-semibold leading-snug">{video.title}</h1>
