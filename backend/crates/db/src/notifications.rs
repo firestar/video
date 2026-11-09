@@ -52,13 +52,14 @@ pub async fn notify_new_comment(
 ) -> Result<i64, sqlx::Error> {
     let res = sqlx::query(
         r#"
-        INSERT INTO notifications (user_id, channel_id, video_id, type)
-        SELECT c.user_id, c.id, $1, 'new_comment'
-        FROM videos v
-        JOIN channels c ON c.id = v.channel_id
-        WHERE v.id = $1
-          AND c.user_id != $2
-        "#,
+         INSERT INTO notifications (user_id, channel_id, video_id, type)
+         SELECT c.user_id, ac.id, $1, 'new_comment'
+         FROM videos v
+         JOIN channels c ON c.id = v.channel_id
+         JOIN channels ac ON ac.user_id = $2
+         WHERE v.id = $1
+           AND c.user_id != $2
+         "#,
     )
     .bind(video_id)
     .bind(commenter_id)
@@ -76,12 +77,13 @@ pub async fn notify_new_like(
 ) -> Result<i64, sqlx::Error> {
     let res = sqlx::query(
         r#"
-        INSERT INTO notifications (user_id, channel_id, video_id, type)
-        SELECT c.user_id, c.id, $1, 'new_like'
-        FROM videos v
-        JOIN channels c ON c.id = v.channel_id
-        WHERE v.id = $1
-          AND c.user_id != $2
+         INSERT INTO notifications (user_id, channel_id, video_id, type)
+         SELECT c.user_id, ac.id, $1, 'new_like'
+         FROM videos v
+         JOIN channels c ON c.id = v.channel_id
+         JOIN channels ac ON ac.user_id = $2
+         WHERE v.id = $1
+           AND c.user_id != $2
         "#,
     )
     .bind(video_id)
