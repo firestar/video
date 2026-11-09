@@ -30,6 +30,7 @@ pub struct VideoRow {
     /// Multi-quality transcode variants (worker-written), e.g.
     /// `[{"quality":"1080p",...,"objectKey":"videos/<id>_1080p.mp4"}]`.
     pub streams: Option<serde_json::Value>,
+    pub is_short: bool,
 }
 
 fn status_to_enum(s: &str) -> VideoStatus {
@@ -74,6 +75,7 @@ impl From<VideoRow> for Video {
             published_at: r.published_at,
             publish_at: r.publish_at,
             created_at: r.created_at,
+            is_short: r.is_short,
         }
     }
 }
@@ -83,18 +85,19 @@ pub async fn create(pool: &Pool, req: &VideoCreate) -> Result<VideoRow, sqlx::Er
     let visibility = req.visibility.as_str();
     sqlx::query_as(
         r#"
-         INSERT INTO videos (channel_id, title, description, object_key, tags, status, visibility, publish_at)
-         VALUES ($1, $2, $3, $4, $5, 'processing', $6, $7)
-         RETURNING *
-         "#,
-    )
-    .bind(req.channel_id)
-    .bind(req.title.as_str())
-    .bind(req.description.as_deref())
-    .bind(req.object_key.as_str())
-    .bind(&req.tags)
-    .bind(visibility)
-    .bind(req.publish_at)
+          INSERT INTO videos (channel_id, title, description, object_key, tags, status, visibility, publish_at, is_short)
+          VALUES ($1, $2, $3, $4, $5, 'processing', $6, $7, $8)
+          RETURNING *
+          "#,
+     )
+     .bind(req.channel_id)
+     .bind(req.title.as_str())
+     .bind(req.description.as_deref())
+     .bind(req.object_key.as_str())
+     .bind(&req.tags)
+     .bind(visibility)
+     .bind(req.publish_at)
+     .bind(req.is_short)
     .fetch_one(pool)
     .await
 }
@@ -278,6 +281,42 @@ pub async fn list_public(
         .fetch_all(pool)
         .await
 }
+/// One row of the Shorts feed: a ready public short + its channel name/avatar.
+#[derive(Debug, FromRow, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortFeedRow {
+    pub id: Uuid,
+    pub title: String,
+    pub thumbnail_url: Option<String>,
+    pub duration_secs: Option<i32>,
+    pub view_count: i64,
+    pub like_count: i64,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub channel_id: Uuid,
+    pub channel_name: String,
+    pub channel_avatar_url: Option<String>,
+}
+
+/// Shorts feed: ready, public, is_short videos, newest first, with channel info.
+pub async fn list_shorts(pool: &Pool, limit: i64) -> Result<Vec<ShortFeedRow>, sqlx::Error> {
+    sqlx::query_as(
+        r#"
+        SELECT v.id, v.title, v.thumbnail_url, v.duration_secs, v.view_count, v.like_count, v.created_at,
+               c.id AS channel_id, c.name AS channel_name, u.avatar_url AS channel_avatar_url
+        FROM videos v
+        JOIN channels c ON c.id = v.channel_id
+        JOIN users u ON u.id = c.user_id
+        WHERE v.is_short = true AND v.status = 'ready' AND v.visibility = 'public'
+          AND v.published_at IS NOT NULL AND v.published_at <= now()
+        ORDER BY v.published_at DESC NULLS LAST, v.created_at DESC
+        LIMIT $1
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
 
 /// Ready-video count + total views for one channel (channel About tab).
 pub async fn count_and_views_for_channel(

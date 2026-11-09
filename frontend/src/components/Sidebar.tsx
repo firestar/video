@@ -14,6 +14,7 @@ interface SubEntry {
 const links = [
   { href: "/", label: "Home" },
   { href: "/trending", label: "Trending" },
+  { href: "/shorts", label: "Shorts" },
   { href: "/subscriptions", label: "Subscriptions" },
   { href: "/history", label: "History" },
   { href: "/watch-later", label: "Watch Later" },

@@ -138,6 +138,7 @@ pub async fn create_video_with_auth(
                 })?,
         ),
     };
+    let is_short = req_json.get("isShort").and_then(|v| v.as_bool()).unwrap_or(false);
     let vc = VideoCreate {
         channel_id: channel_row.id,
         title,
@@ -146,6 +147,7 @@ pub async fn create_video_with_auth(
         tags,
         visibility,
         publish_at,
+        is_short,
     };
     let row = videos::create(&state.db, &vc).await?;
     let video: domain::Video = row.into();
@@ -1266,6 +1268,22 @@ pub async fn home_feed(
 
     Ok(Json(serde_json::json!({ "videos": videos_json, "reasons": reasons })))
 }
+/// Query params for GET /api/shorts.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ShortsQuery {
+    limit: Option<i64>,
+}
+
+/// GET /api/shorts — feed of short-form videos (newest first), with channel info.
+pub async fn list_shorts(
+    State(state): State<AppState>,
+    Query(q): Query<ShortsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let limit = q.limit.unwrap_or(30).clamp(1, 100);
+    let rows = videos::list_shorts(&state.db, limit).await?;
+    Ok(Json(serde_json::json!({ "shorts": rows })))
+}
+
 
 /// DELETE /api/history — clear all watch history for the user.
 pub async fn clear_history(

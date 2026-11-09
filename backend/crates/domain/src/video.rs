@@ -71,6 +71,8 @@ pub struct Video {
     /// When a scheduled video becomes visible (NULL = not scheduled).
     pub publish_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    /// Short-form vertical video (user-flagged at upload).
+    pub is_short: bool,
 }
 /// One chapter parsed from a video description (YouTube-style timestamps).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -261,6 +263,9 @@ pub struct VideoCreate {
     /// Schedule: publish at this time instead of immediately (future only).
     #[serde(default)]
     pub publish_at: Option<DateTime<Utc>>,
+    /// Short-form vertical video (default false).
+    #[serde(default)]
+    pub is_short: bool,
 }
 
 /// Fields updated by the worker after transcode.
@@ -384,6 +389,7 @@ mod tests {
             published_at: None,
             publish_at: None,
             created_at: Utc::now(),
+            is_short: false,
         };
         let s = serde_json::to_string(&v).unwrap();
         assert!(s.contains("\"channelId\""));

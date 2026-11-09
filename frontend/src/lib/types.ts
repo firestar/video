@@ -36,6 +36,8 @@ export interface Video {
   publishAt?: string | null;
   publishedAt?: string | null;
   createdAt: string;
+  /** Short-form vertical video. */
+  isShort?: boolean;
   /** Joined by GET /api/videos (list) — may be null. */
   channel?: Channel;
   /** Feed reason badge (from /api/home/feed): "trending" | "subscription" | "related". */

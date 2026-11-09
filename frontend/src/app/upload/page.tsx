@@ -38,6 +38,7 @@ export default function UploadPage() {
   const [visibility, setVisibility] = useState<VideoVisibility>("public");
   const [schedule, setSchedule] = useState<"now" | "scheduled">("now");
   const [publishAt, setPublishAt] = useState("");
+  const [isShort, setIsShort] = useState(false);
 
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0);
@@ -134,6 +135,7 @@ export default function UploadPage() {
             .filter(Boolean),
           object_key: presign.object_key,
           visibility,
+          isShort,
           ...(schedule === "scheduled"
             ? { publishAt: new Date(publishAt).toISOString() }
             : {}),
@@ -311,6 +313,22 @@ export default function UploadPage() {
                 />
               )}
             </div>
+          </div>
+          <div>
+            <p className="mb-2 text-sm font-medium">Format</p>
+            <label className="flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm transition-colors">
+              <input
+                type="checkbox"
+                checked={isShort}
+                onChange={(e) => setIsShort(e.target.checked)}
+                disabled={busy}
+                className="mt-0.5 accent-blue-500"
+              />
+              <span>
+                <span className="font-medium">Short</span>
+                <span className="block text-muted-foreground">Vertical, under 60 seconds. Appears in the Shorts feed.</span>
+              </span>
+            </label>
           </div>
           {phase === "uploading" && (
             <div>

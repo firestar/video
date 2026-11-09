@@ -191,6 +191,13 @@ pub fn build_router(state: AppState) -> Router {
                 .post(routes::create_video_with_auth),
         )
         .with_state(state.clone());
+    // /api/shorts: public Shorts feed.
+    let shorts_routes = Router::new()
+        .route(
+            "/api/shorts",
+            axum::routing::get(routes::list_shorts),
+        )
+        .with_state(state.clone());
     // /api/videos/{id}: GET is public but visibility-gated (private videos
     // are owner-only), so it runs under optional auth; rate-limited like the
     // other public reads.
@@ -245,6 +252,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(public_routes)
         .merge(protected_routes)
         .merge(videos_routes)
+        .merge(shorts_routes)
         .merge(video_detail_routes)
         .merge(channel_routes)
         .merge(home_feed_routes)
