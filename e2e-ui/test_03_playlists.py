@@ -28,7 +28,7 @@ def run(ctx):
     page.goto(BASE + "/playlists", wait_until="domcontentloaded")
     page.wait_for_selector("h1:has-text('Playlists')", timeout=30000)
     page.get_by_role("button", name="New playlist").click()
-    form = page.locator("form")
+    form = page.get_by_role("main").locator("form")
     form.wait_for(timeout=10000)
     form.get_by_placeholder("Playlist title").type(pl_title, delay=10)
     form.get_by_placeholder("Description (optional)").type("created by ui e2e", delay=10)
@@ -70,6 +70,7 @@ def run(ctx):
 
     # 5. API: videoCount == 1.
     s, pl = ctx.client.get(f"/api/playlists/{pid}", token=owner["token"])
+    pl = (pl or {}).get("playlist", {}) if isinstance(pl, dict) else {}
     ctx.check("api: videoCount == 1 after add",
               s == 200 and pl.get("videoCount") == 1, f"got {s}: {pl}")
 
@@ -83,14 +84,16 @@ def run(ctx):
     page.locator('button[aria-label="Remove from playlist"]').click()
     page.wait_for_selector("text=No videos in this playlist", timeout=10000)
     s, pl = ctx.client.get(f"/api/playlists/{pid}", token=owner["token"])
+    pl = (pl or {}).get("playlist", {}) if isinstance(pl, dict) else {}
     ctx.check("api: videoCount == 0 after remove",
               s == 200 and pl.get("videoCount") == 0, f"got {s}: {pl}")
     ui.shot(page, "03 video removed")
-
     # 7. Delete the playlist (accept the confirm dialog).
-    with page.expect_dialog() as dialog_info:
-        page.get_by_role("button", name="Delete").click()
-    dialog_info.value.accept()
+    # A native confirm() blocks the page's JS thread, so the dialog must be
+    # accepted the instant it opens — otherwise the click's post-action
+    # verification hangs until timeout. Accept eagerly via a one-shot listener.
+    page.once("dialog", lambda d: d.accept())
+    page.get_by_role("button", name="Delete").click()
     page.wait_for_url(f"{BASE}/playlists", timeout=15000)
     s, pl = ctx.client.get(f"/api/playlists/{pid}", token=owner["token"])
     ctx.check("api: playlist deleted (404)", s == 404, f"got {s}: {pl}")

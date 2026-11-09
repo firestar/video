@@ -56,8 +56,14 @@ def run(ctx):
     ti.click()
     page.keyboard.press("Control+a")
     page.keyboard.type(new_title, delay=10)
-    row.locator("textarea").type(new_desc, delay=10)
-    row.locator("input[placeholder='e2e, sample, demo']").type(new_tags, delay=10)
+    ta = row.locator("textarea")
+    ta.click()
+    page.keyboard.press("Control+a")
+    page.keyboard.type(new_desc, delay=10)
+    tg = row.locator("input[placeholder='e2e, sample, demo']")
+    tg.click()
+    page.keyboard.press("Control+a")
+    page.keyboard.type(new_tags, delay=10)
 
     # 4. Real dropdown: visibility -> private.
     row.locator("select").select_option("private")
