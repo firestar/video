@@ -77,6 +77,14 @@ pub async fn create(
     let mut handle = req.channel_name.clone();
     let mut suffix: u32 = 0;
     loop {
+        // Each attempt runs under its own savepoint: a unique-violation
+        // aborts the transaction in Postgres, so without this the retry
+        // would see "current transaction is aborted" instead of a fresh
+        // 23505. ROLLBACK TO clears the aborted state and keeps the
+        // user insert.
+        sqlx::query("SAVEPOINT channel_insert")
+            .execute(&mut *tx)
+            .await?;
         match sqlx::query(
             r#"
             INSERT INTO channels (user_id, name, handle)
@@ -91,6 +99,9 @@ pub async fn create(
         {
             Ok(_) => break,
             Err(sqlx::Error::Database(db)) if db.code().as_deref() == Some("23505") => {
+                sqlx::query("ROLLBACK TO SAVEPOINT channel_insert")
+                    .execute(&mut *tx)
+                    .await?;
                 suffix += 1;
                 if suffix > 100 {
                     return Err(sqlx::Error::Protocol(
