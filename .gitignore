@@ -16,6 +16,7 @@ node_modules/
 *.log
 .sqlx/
 __pycache__/
+e2e-ui/videos/
 *.pyc
 
 # Worker scratch / probes / build scripts

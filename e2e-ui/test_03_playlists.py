@@ -60,9 +60,17 @@ def run(ctx):
     save_btn.click()
     menu = page.locator('div.absolute:has-text("Save to playlist")')
     menu.wait_for(timeout=10000)
-    ctx.check("save menu opens with the playlist listed",
-              menu.get_by_text(pl_title, exact=True).count() > 0)
-    menu.get_by_text(pl_title, exact=True).click()
+    # The playlist list loads async after the menu opens — wait for the item
+    # instead of counting immediately (a bare count() races the fetch).
+    item = menu.get_by_text(pl_title, exact=True)
+    try:
+        item.wait_for(timeout=10000)
+        ctx.check("save menu opens with the playlist listed", True)
+    except Exception:
+        ctx.check("save menu opens with the playlist listed", False,
+                  "playlist not in menu after 10s")
+        return
+    item.click()
     # the menu stays open; the item flips to a checkmark once added
     menu.locator("svg.lucide-check").wait_for(timeout=10000)
     ctx.check("checkmark shown for added playlist", True)

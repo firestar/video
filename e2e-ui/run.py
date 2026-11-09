@@ -6,9 +6,11 @@ Usage:
   E2E_UI_BASE=https://... python3 e2e-ui/run.py
 
 Drives a real Chromium with genuine input (CDP key/mouse/touch/wheel events,
-real file input). Every run registers its own users and creates its own
-videos with real ffmpeg bytes; everything it creates is deleted again in the
-finally block. Exit code 0 = all passed (skips allowed), 1 = failures.
+Drives a real Chromium with genuine input (CDP key/mouse/touch/wheel events,
+real file input). Reuses a fixed pair of test accounts (registered once, then
+logged in) and creates its own videos with real ffmpeg bytes; every video and
+playlist it creates is deleted again in the finally block. Exit code 0 = all
+passed (skips allowed), 1 = failures.
 
 Prereqs: ffmpeg on PATH, `pip install playwright && playwright install chromium`.
 """
