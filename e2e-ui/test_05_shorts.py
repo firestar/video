@@ -21,7 +21,7 @@ def _upload_short(ctx, ui, page, n, color):
     time.sleep(0.5)
     # tick the Short checkbox (real click)
     page.get_by_label("Short").check()
-    page.get_by_role("button", name="Upload", exact=True).click()
+    page.get_by_role("main").get_by_role("button", name="Upload", exact=True).click()
     page.wait_for_url(f"{BASE}/watch/**", timeout=120000)
     vid = page.url.split("/watch/")[1].split("?")[0]
     ctx.videos[f"short{n}"] = vid

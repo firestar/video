@@ -167,12 +167,6 @@ class Ctx:
         return self.users[role]
 
     # ---- videos ----
-    def gen_video(self, key, label, vertical=False, seconds=3, color="blue"):
-        """Generate (and cache) a local mp4 for this run."""
-        if key not in self._video_paths:
-            path = os.path.join(VIDEOS_DIR, f"{self.run_id}_{key}.mp4")
-            make_video(path, label, vertical=vertical, seconds=seconds, color=color)
-            self._video_paths[key] = path
     def gen_video(self, key, label, vertical=False, seconds=3, color="blue",
                   filename=None):
         """Generate (and cache) a local mp4 for this run."""
@@ -182,6 +176,10 @@ class Ctx:
             make_video(path, label, vertical=vertical, seconds=seconds, color=color)
             self._video_paths[key] = path
         return self._video_paths[key]
+
+    def upload_video(self, key, role="owner", title=None, description=None,
+                     tags=None, vertical=False, color="blue", is_short=False):
+        """Upload a real video via the API (presign + PUT + create). Returns id."""
         u = self.user(role)
         if not u:
             return None
@@ -234,7 +232,8 @@ class Ctx:
         while time.time() - t0 < timeout:
             s, v = self.client.get(f"/api/videos/{video_id}")
             if s == 200 and isinstance(v, dict):
-                last = v.get("status")
+                vid = v.get("video")
+                last = vid.get("status") if isinstance(vid, dict) else None
                 if last in ("ready", "failed"):
                     return last
             time.sleep(poll)

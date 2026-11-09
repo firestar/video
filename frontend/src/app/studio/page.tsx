@@ -229,7 +229,7 @@ function StudioContent() {
           {videos.map((v) => {
             const isEditing = editing === v.id;
             return (
-              <div key={v.id} className="flex items-center gap-4 rounded-lg border border-border bg-background p-3">
+              <div key={v.id} data-video-id={v.id} className="flex items-center gap-4 rounded-lg border border-border bg-background p-3">
                 <div className="size-24 shrink-0 overflow-hidden rounded-md bg-muted sm:size-28">
                   {v.thumbnailUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element

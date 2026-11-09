@@ -2,9 +2,21 @@
 real typing) on the owner's video; owner opens the bell (real click), sees
 both notifications, marks one read by clicking it (navigates to the video),
 then marks all read. Verified via the API at the end."""
+import re
 import time
 
 from harness import BASE
+
+BELL = 'button[aria-label^="Notifications"]'
+PANEL = 'div.absolute:has-text("Notifications")'
+
+
+def _badge(page):
+    """The unread-count badge span inside the bell button, or None."""
+    b = page.locator(BELL + " span")
+    if b.count() == 0:
+        return None
+    return b.first.inner_text().strip()
 
 
 def run(ctx):
@@ -30,10 +42,11 @@ def run(ctx):
     like_btn = vpage.locator("button:has(svg.lucide-thumbs-up)")
     like_btn.wait_for(timeout=10000)
     like_btn.click()
-    time.sleep(1.0)  # let the optimistic state + API settle
-    cls = like_btn.get_attribute("class") or ""
-    ctx.check("like button reflects liked state",
-              "text-primary" in cls, f"class={cls!r}")
+    vpage.wait_for_function(
+        "() => { const b = document.querySelector('button:has(svg.lucide-thumbs-up)'); "
+        "return b && b.getAttribute('aria-pressed') === 'true'; }",
+        timeout=10000)
+    ctx.check("like button reflects liked state (aria-pressed)", True)
 
     # 3. Viewer posts a comment (real typing + real click).
     body = f"e2e-ui comment {ctx.run_id}"
@@ -43,27 +56,29 @@ def run(ctx):
     ctx.check("comment appears in the list", True)
     ui.shot(vpage, "04 viewer liked+commented")
 
-    # 4. Owner: open the bell (real click). The panel loads on open.
+    # 4. Owner: open the bell (real click). Data loads on mount + poll.
     opage = ui.pages.get("owner")
     if not opage:
         opage = ui.ui_login("owner", owner["email"], owner["password"])
     opage.goto(BASE + "/", wait_until="domcontentloaded")
-    bell = opage.locator('button[aria-label^="Notifications"]')
+    bell = opage.locator(BELL)
     bell.wait_for(timeout=10000)
     bell.click()
-    time.sleep(1.0)  # panel load
-
-    panel_text = opage.locator("div.relative").last.inner_text()
-    ctx.check("bell badge shows 2 unread",
-              opage.locator('button[aria-label^="Notifications"] span',
-                            has_text="2").count() > 0,
-              "badge '2' not found")
+    # wait until the panel shows both notifications (data is async)
+    opage.wait_for_selector(f'{PANEL}:has-text("commented on your video")',
+                            timeout=20000)
+    opage.wait_for_selector(f'{PANEL}:has-text("liked your video")',
+                            timeout=5000)
+    panel_text = opage.locator(PANEL).inner_text()
     ctx.check("panel shows 'liked your video'",
               "liked your video" in panel_text, f"panel={panel_text[:200]!r}")
     ctx.check("panel shows 'commented on your video'",
-              "commented on your video" in panel_text, f"panel={panel_text[:200]!r}")
+              "commented on your video" in panel_text,
+              f"panel={panel_text[:200]!r}")
     ctx.check("panel names the viewer",
               viewer["name"] in panel_text, f"panel={panel_text[:200]!r}")
+    ctx.check("bell badge shows 2 unread", _badge(opage) == "2",
+              f"badge={_badge(opage)!r}")
     ui.shot(opage, "04 owner bell open")
 
     # 5. Click the comment notification -> marks read + navigates to the video.
@@ -73,20 +88,19 @@ def run(ctx):
               opage.url == f"{BASE}/watch/{vid}", f"url={opage.url}")
 
     # 6. Open the bell again: badge should now show 1 (only the like unread).
-    bell = opage.locator('button[aria-label^="Notifications"]')
+    bell = opage.locator(BELL)
+    bell.wait_for(timeout=10000)
     bell.click()
-    time.sleep(1.0)
-    ctx.check("badge now shows 1 unread",
-              opage.locator('button[aria-label^="Notifications"] span',
-                            has_text="1").count() > 0,
-              "badge '1' not found")
+    opage.wait_for_selector(f'{PANEL}:has-text("liked your video")',
+                            timeout=20000)
+    ctx.check("badge now shows 1 unread", _badge(opage) == "1",
+              f"badge={_badge(opage)!r}")
 
     # 7. Mark all as read (real click) -> badge disappears.
     opage.get_by_role("button", name="Mark all as read").click()
     time.sleep(1.0)
-    badge = opage.locator(
-        'button[aria-label^="Notifications"] span',
-        has_text=lambda t: t.strip().isdigit())
+    badge = opage.locator(BELL + " span",
+                          has_text=re.compile(r"^\d+$"))
     ctx.check("badge gone after mark-all-read", badge.count() == 0,
               f"badge count={badge.count()}")
     ui.shot(opage, "04 all read")

@@ -39,7 +39,7 @@ def run(ctx):
     page.get_by_placeholder("Tags (comma-separated)").type("e2e-ui, upload", delay=10)
 
     # 6. Real click on Upload.
-    page.get_by_role("button", name="Upload", exact=True).click()
+    page.get_by_role("main").get_by_role("button", name="Upload", exact=True).click()
 
     # 7. Redirect to /watch/{id} (upload can take a moment: presign + PUT + create).
     page.wait_for_url(f"{BASE}/watch/**", timeout=120000)
@@ -56,9 +56,14 @@ def run(ctx):
 
     # 9. Reload — the page still shows the "not ready" placeholder from load.
     page.reload(wait_until="domcontentloaded")
-    ctx.check("watch page shows the title",
-              page.locator("h1", has_text=title).count() > 0,
-              "h1 with title not found")
+    # The client fetches the video after hydration; wait for the h1 (count()
+    # alone would race the fetch).
+    try:
+        page.wait_for_selector(f"h1:has-text('{title}')", timeout=30000)
+        ctx.check("watch page shows the title", True)
+    except Exception:
+        ctx.check("watch page shows the title", False,
+                  "h1 with title not found")
 
     # 10. The video must actually play: wait for playback, then prove
     #     currentTime advances.

@@ -39,6 +39,7 @@ def run(ctx):
     card = page.locator("a[href^='/playlists/']", has_text=pl_title)
     card.wait_for(timeout=10000)
     ctx.check("playlist card appears on /playlists", card.count() > 0)
+    ui.shot(page, "03 playlist created")
 
     # 3. Find the id via the API.
     s, p = ctx.client.get("/api/playlists", token=owner["token"])
@@ -57,33 +58,40 @@ def run(ctx):
     page.wait_for_selector("h1", timeout=30000)
     save_btn = page.get_by_role("button", name="Save", exact=True)
     save_btn.click()
-    # menu item = the playlist title
-    page.get_by_text(pl_title, exact=True).click()
-    time.sleep(0.5)
-    # reopen the menu and check for the checkmark
-    save_btn.click()
-    added = page.locator("svg.lucide-check")
-    # 6. Playlist page: the video row is there; remove it via the X button.
+    menu = page.locator('div.absolute:has-text("Save to playlist")')
+    menu.wait_for(timeout=10000)
+    ctx.check("save menu opens with the playlist listed",
+              menu.get_by_text(pl_title, exact=True).count() > 0)
+    menu.get_by_text(pl_title, exact=True).click()
+    # the menu stays open; the item flips to a checkmark once added
+    menu.locator("svg.lucide-check").wait_for(timeout=10000)
+    ctx.check("checkmark shown for added playlist", True)
+    ui.shot(page, "03 video added to playlist")
+
+    # 5. API: videoCount == 1.
+    s, pl = ctx.client.get(f"/api/playlists/{pid}", token=owner["token"])
+    ctx.check("api: videoCount == 1 after add",
+              s == 200 and pl.get("videoCount") == 1, f"got {s}: {pl}")
+
+    # 6. Playlist page: the video is there; remove it via the X button.
     s, v = ctx.client.get(f"/api/videos/{vid}", token=owner["token"])
-    vtitle = v.get("title") if isinstance(v, dict) else ""
+    vtitle = (v.get("video") or {}).get("title", "") if isinstance(v, dict) else ""
     page.goto(f"{BASE}/playlists/{pid}", wait_until="domcontentloaded")
-    row = page.locator("div", has_text=vtitle).last
-    row.wait_for(timeout=10000)
-    ctx.check("playlist page shows the video row", row.count() > 0)
-    row = page.locator("div", has_text="E2E-UI").last
-    row.wait_for(timeout=10000)
-    ctx.check("playlist page shows the video row", row.count() > 0)
+    page.get_by_text(vtitle, exact=True).wait_for(timeout=10000)
+    ctx.check("playlist page shows the video", True)
+    page.locator("div.group.relative").first.hover()
     page.locator('button[aria-label="Remove from playlist"]').click()
-    time.sleep(0.5)
+    page.wait_for_selector("text=No videos in this playlist", timeout=10000)
     s, pl = ctx.client.get(f"/api/playlists/{pid}", token=owner["token"])
     ctx.check("api: videoCount == 0 after remove",
               s == 200 and pl.get("videoCount") == 0, f"got {s}: {pl}")
+    ui.shot(page, "03 video removed")
 
     # 7. Delete the playlist (accept the confirm dialog).
     with page.expect_dialog() as dialog_info:
         page.get_by_role("button", name="Delete").click()
     dialog_info.value.accept()
-    time.sleep(0.5)
+    page.wait_for_url(f"{BASE}/playlists", timeout=15000)
     s, pl = ctx.client.get(f"/api/playlists/{pid}", token=owner["token"])
     ctx.check("api: playlist deleted (404)", s == 404, f"got {s}: {pl}")
     ui.shot(page, "03 playlist deleted")
