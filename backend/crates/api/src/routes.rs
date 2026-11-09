@@ -5,7 +5,7 @@ use axum::{Extension, Json};
 use uuid::Uuid;
 
 use auth::encode_token;
-use db::{channels, comments, history, likes, notifications, playlists, subscriptions, users, videos, watch_later};
+use db::{analytics, channels, comments, history, likes, notifications, playlists, subscriptions, users, videos, watch_later};
 use domain::{
     CommentCreate, CommentUpdate, DurationFilter, HistoryQuery, JwtClaims, LoginRequest,
     PlaylistCreate, PlaylistItemAdd, PlaylistUpdate, RegisterRequest, SearchSort,
@@ -447,6 +447,40 @@ pub async fn list_channel_videos(
     let items = videos_with_channels(&state.db, &state.storage, &rows).await?;
     Ok(Json(serde_json::Value::Array(items)))
 }
+/// GET /api/channels/{id}/analytics — Studio analytics for a channel (owner only).
+///
+/// Returns total views/subscribers, a 28-day daily series for each, and the
+/// channel's top videos by view count.
+pub async fn channel_analytics(
+    State(state): State<AppState>,
+    claims: Option<Extension<JwtClaims>>,
+    Path(channel_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let claims = claims
+        .map(|Extension(c)| c)
+        .ok_or(ApiError::Unauthorized("missing token".into()))?;
+    let channel = channels::find_by_id(&state.db, channel_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if channel.user_id != claims.sub {
+        return Err(ApiError::Forbidden);
+    }
+    let days: i32 = 28;
+    let total_views = analytics::total_views(&state.db, channel_id).await?;
+    let total_subscribers = analytics::total_subscribers(&state.db, channel_id).await?;
+    let views_by_day = analytics::views_by_day(&state.db, channel_id, days).await?;
+    let subscribers_by_day = analytics::subscribers_by_day(&state.db, channel_id, days).await?;
+    let top_videos = analytics::top_videos(&state.db, channel_id, 5).await?;
+    Ok(Json(serde_json::json!({
+        "totalViews": total_views,
+        "totalSubscribers": total_subscribers,
+        "days": days,
+        "viewsByDay": views_by_day,
+        "subscribersByDay": subscribers_by_day,
+        "topVideos": top_videos,
+    })))
+}
+
 
 /// PATCH /api/videos/{id} — update title / description / tags. Owner of the
 /// video's channel only.

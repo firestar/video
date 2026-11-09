@@ -1,5 +1,6 @@
 //! DB crate: SQLx pool setup + query modules per entity.
 
+pub mod analytics;
 pub mod channels;
 pub mod comments;
 pub mod history;

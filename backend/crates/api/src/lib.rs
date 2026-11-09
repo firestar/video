@@ -207,6 +207,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/channels/{id}/videos",
             axum::routing::get(routes::list_channel_videos),
         )
+        .route(
+            "/api/channels/{id}/analytics",
+            axum::routing::get(routes::channel_analytics),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::optional_auth_middleware,

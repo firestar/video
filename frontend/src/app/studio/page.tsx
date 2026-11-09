@@ -4,6 +4,7 @@ import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import type { Video, VideoVisibility } from "@/lib/types";
+import AnalyticsDashboard from "@/components/AnalyticsDashboard";
 
 interface MeResponse {
   id: string;
@@ -195,6 +196,7 @@ function StudioContent() {
         </p>
       </div>
 
+      {channelId && <AnalyticsDashboard channelId={channelId} />}
       {savedMsg && (
         <div className="mb-4 rounded-md border border-border bg-muted/40 px-4 py-3 text-sm text-foreground/80">
           {savedMsg}
