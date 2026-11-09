@@ -56,6 +56,8 @@ export interface Comment {
   body: string;
   likeCount: number;
   createdAt: string;
+  updatedAt?: string | null;
+  pinnedAt?: string | null;
   /** Author name, batch-joined by GET /api/comments/{videoId}. */
   authorName?: string;
   /** Author avatar URL (may be null). */

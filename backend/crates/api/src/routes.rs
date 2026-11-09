@@ -7,9 +7,10 @@ use uuid::Uuid;
 use auth::encode_token;
 use db::{channels, comments, history, likes, notifications, playlists, subscriptions, users, videos, watch_later};
 use domain::{
-    CommentCreate, DurationFilter, HistoryQuery, JwtClaims, LoginRequest, PlaylistCreate,
-    PlaylistItemAdd, PlaylistUpdate, RegisterRequest, SearchSort, SubscribeRequest, TokenResponse,
-    UploadDateFilter, User, Video, VideoCreate, VideoStatus, VideoVisibility,
+    CommentCreate, CommentUpdate, DurationFilter, HistoryQuery, JwtClaims, LoginRequest,
+    PlaylistCreate, PlaylistItemAdd, PlaylistUpdate, RegisterRequest, SearchSort,
+    SubscribeRequest, TokenResponse, UploadDateFilter, User, Video, VideoCreate, VideoStatus,
+    VideoVisibility,
 };
 
 use crate::error::ApiError;
@@ -377,6 +378,10 @@ pub async fn get_video(
         None
     };
 
+    let is_owner = matches!(
+        (claims.as_ref(), &channel),
+        (Some(c), Some(ch)) if ch.user_id == c.sub
+    );
     let (has_liked, has_disliked, in_watch_later) = match claims {
         Some(Extension(c)) => (
             likes::has_liked(&state.db, c.sub, id).await.unwrap_or(false),
@@ -399,6 +404,7 @@ pub async fn get_video(
         "hasDisliked": has_disliked,
         "inWatchLater": in_watch_later,
         "chapters": chapters,
+        "isOwner": is_owner,
         "thumbnailUrl": thumbnail_url.map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
     })))
 }
@@ -674,6 +680,73 @@ pub async fn delete_comment(
     }
     Ok(StatusCode::NO_CONTENT)
 }
+/// PATCH /api/comments/{id} — edit your own comment.
+pub async fn edit_comment(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<CommentUpdate>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    req.validate().map_err(ApiError::BadRequest)?;
+    let comment = comments::find_by_id(&state.db, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if comment.user_id != claims.sub {
+        return Err(ApiError::Forbidden);
+    }
+    let updated = comments::update_body(&state.db, id, req.body.trim()).await?;
+    Ok(Json(serde_json::json!({ "comment": domain::Comment::from(updated) })))
+}
+
+/// POST /api/comments/{id}/pin — video owner pins a top-level comment.
+pub async fn pin_comment(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let comment = comments::find_by_id(&state.db, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if comment.parent_id.is_some() {
+        return Err(ApiError::BadRequest("only top-level comments can be pinned".into()));
+    }
+    let video = videos::find_by_id(&state.db, comment.video_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let channel = channels::find_by_id(&state.db, video.channel_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if channel.user_id != claims.sub {
+        return Err(ApiError::Forbidden);
+    }
+    comments::pin(&state.db, id, comment.video_id).await?;
+    let updated = comments::find_by_id(&state.db, id).await?.ok_or(ApiError::NotFound)?;
+    Ok(Json(serde_json::json!({ "comment": domain::Comment::from(updated) })))
+}
+
+/// DELETE /api/comments/{id}/pin — video owner unpins a comment.
+pub async fn unpin_comment(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let comment = comments::find_by_id(&state.db, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let video = videos::find_by_id(&state.db, comment.video_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let channel = channels::find_by_id(&state.db, video.channel_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if channel.user_id != claims.sub {
+        return Err(ApiError::Forbidden);
+    }
+    comments::unpin(&state.db, id).await?;
+    let updated = comments::find_by_id(&state.db, id).await?.ok_or(ApiError::NotFound)?;
+    Ok(Json(serde_json::json!({ "comment": domain::Comment::from(updated) })))
+}
+
 
 /// POST /api/comments/{id}/like — toggle a like on a comment.
 pub async fn toggle_comment_like(

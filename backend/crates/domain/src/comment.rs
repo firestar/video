@@ -13,6 +13,8 @@ pub struct Comment {
     pub body: String,
     pub like_count: i64,
     pub created_at: DateTime<Utc>,
+    pub updated_at: Option<DateTime<Utc>>,
+    pub pinned_at: Option<DateTime<Utc>>,
 }
 
 /// Threaded comment node: a comment with its replies.
@@ -32,6 +34,25 @@ pub struct CommentCreate {
 }
 
 impl CommentCreate {
+    pub fn validate(&self) -> Result<(), String> {
+        let t = self.body.trim();
+        if t.is_empty() {
+            return Err("comment body required".into());
+        }
+        if t.len() > 10_000 {
+            return Err("comment too long (max 10000 chars)".into());
+        }
+        Ok(())
+    }
+}
+
+/// Request body for PATCH /api/comments/{id} (edit own comment).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentUpdate {
+    pub body: String,
+}
+impl CommentUpdate {
     pub fn validate(&self) -> Result<(), String> {
         let t = self.body.trim();
         if t.is_empty() {

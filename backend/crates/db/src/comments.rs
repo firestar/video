@@ -15,6 +15,8 @@ pub struct CommentRow {
     pub body: String,
     pub like_count: i64,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub pinned_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl From<CommentRow> for Comment {
@@ -27,6 +29,8 @@ impl From<CommentRow> for Comment {
             body: r.body,
             like_count: r.like_count,
             created_at: r.created_at,
+            updated_at: r.updated_at,
+            pinned_at: r.pinned_at,
         }
     }
 }
@@ -88,7 +92,7 @@ pub async fn list_for_video_threaded(
         r#"
         SELECT * FROM comments
         WHERE video_id = $1
-        ORDER BY created_at ASC
+        ORDER BY (pinned_at IS NULL) ASC, created_at ASC
         LIMIT $2 OFFSET $3
         "#,
     )
@@ -129,4 +133,58 @@ pub async fn delete(pool: &Pool, id: Uuid) -> Result<bool, sqlx::Error> {
         .execute(pool)
         .await?;
     Ok(res.rows_affected() > 0)
+}
+
+/// Edit a comment's body (author only — caller checks). Returns the updated row.
+pub async fn update_body(
+    pool: &Pool,
+    id: Uuid,
+    body: &str,
+) -> Result<CommentRow, sqlx::Error> {
+    sqlx::query_as(
+        r#"
+        UPDATE comments SET body = $2, updated_at = now() WHERE id = $1 RETURNING *
+        "#,
+    )
+    .bind(id)
+    .bind(body)
+    .fetch_one(pool)
+    .await
+}
+
+/// Pin a comment: sets pinned_at on it and clears it on every other comment
+/// for the same video (one pinned comment per video). Caller checks ownership.
+pub async fn pin(pool: &Pool, comment_id: Uuid, video_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE comments SET pinned_at = NULL
+        WHERE video_id = $2 AND id <> $1 AND pinned_at IS NOT NULL
+        "#,
+    )
+    .bind(comment_id)
+    .bind(video_id)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        r#"
+        UPDATE comments SET pinned_at = now() WHERE id = $1
+        "#,
+    )
+    .bind(comment_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Unpin a comment (owner only — caller checks).
+pub async fn unpin(pool: &Pool, comment_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE comments SET pinned_at = NULL WHERE id = $1
+        "#,
+    )
+    .bind(comment_id)
+    .execute(pool)
+    .await?;
+    Ok(())
 }

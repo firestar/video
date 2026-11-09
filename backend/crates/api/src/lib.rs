@@ -117,11 +117,17 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/comments/{id}",
-            axum::routing::delete(routes::delete_comment),
+            axum::routing::delete(routes::delete_comment)
+                .patch(routes::edit_comment),
         )
         .route(
             "/api/comments/{id}/like",
             axum::routing::post(routes::toggle_comment_like),
+        )
+        .route(
+            "/api/comments/{id}/pin",
+            axum::routing::post(routes::pin_comment)
+                .delete(routes::unpin_comment),
         )
         .route(
             "/api/videos/{id}",

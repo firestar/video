@@ -31,6 +31,7 @@ interface WatchData {
   hasDisliked?: boolean;
   inWatchLater?: boolean;
   chapters: Chapter[];
+  isOwner?: boolean;
 }
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
@@ -720,7 +721,7 @@ function WatchContent() {
           </div>
 
           <div className="mt-6">
-            <CommentSection videoId={video.id} />
+            <CommentSection videoId={video.id} isOwner={data.isOwner ?? false} />
           </div>
         </div>
 

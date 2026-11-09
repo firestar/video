@@ -5,7 +5,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { formatCount, formatDate } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
-import { ThumbsUp, Trash2 } from "lucide-react";
+import { ThumbsUp, Trash2, Pencil, Pin } from "lucide-react";
 import { CommentSectionSkeleton } from "@/components/Skeletons";
 import type { Comment } from "@/lib/types";
 
@@ -32,19 +32,30 @@ function CommentItem({
   comment,
   videoId,
   isReply,
+  isOwner,
   onDeleted,
+  onEdited,
+  onPinned,
 }: {
   comment: Comment;
   videoId: string;
   isReply: boolean;
+  isOwner: boolean;
   onDeleted: (id: string) => void;
+  onEdited: (id: string, newBody: string) => void;
+  onPinned: () => void;
 }) {
   const { user } = useAuth();
   const [liked, setLiked] = useState(false);
   const [likeCount, setLikeCount] = useState(comment.likeCount ?? 0);
   const [deleting, setDeleting] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editBody, setEditBody] = useState(comment.body);
+  const [saving, setSaving] = useState(false);
+  const [pinning, setPinning] = useState(false);
 
   const isAuthor = user?.id === comment.userId;
+  const isPinned = Boolean(comment.pinnedAt);
 
   const toggleLike = useCallback(async () => {
     if (!user) {
@@ -74,6 +85,45 @@ function CommentItem({
     }
   }, [user, comment.id, onDeleted]);
 
+  const startEdit = useCallback(() => {
+    setEditBody(comment.body);
+    setEditing(true);
+  }, [comment.body]);
+
+  const saveEdit = useCallback(async () => {
+    if (!user) return;
+    const text = editBody.trim();
+    if (!text) return;
+    setSaving(true);
+    try {
+      await apiFetch(`/api/comments/${comment.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ body: text }),
+      });
+      onEdited(comment.id, text);
+      setEditing(false);
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setSaving(false);
+    }
+  }, [user, comment.id, editBody, onEdited]);
+
+  const togglePin = useCallback(async () => {
+    if (!user) return;
+    setPinning(true);
+    try {
+      await apiFetch(`/api/comments/${comment.id}/pin`, {
+        method: isPinned ? "DELETE" : "POST",
+      });
+      onPinned();
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setPinning(false);
+    }
+  }, [user, comment.id, isPinned, onPinned]);
+
   const name = comment.authorName ?? "Unknown";
   const initial = name.charAt(0).toUpperCase();
 
@@ -87,46 +137,103 @@ function CommentItem({
         )}
       </Avatar>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">{name}</span>
           {isAuthor && (
             <span className="rounded bg-muted px-1.5 text-[10px] text-muted-foreground">you</span>
           )}
-          <span className="text-xs text-muted-foreground">{timeAgo(comment.createdAt)}</span>
-        </div>
-        <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-foreground/80">
-          {comment.body}
-        </p>
-        <div className="mt-1 flex items-center gap-3">
-          <button
-            onClick={toggleLike}
-            className={`flex items-center gap-1 text-xs transition-colors ${
-              liked ? "" : "text-muted-foreground hover:text-foreground/80"
-            }`}
-            aria-pressed={liked}
-          >
-            <ThumbsUp className="size-3.5" />
-            {likeCount > 0 && (
-              <span className="tabular-nums">{formatCount(likeCount)}</span>
-            )}
-          </button>
-          {isAuthor && (
-            <button
-              onClick={handleDelete}
-              disabled={deleting}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive disabled:opacity-50"
-            >
-              <Trash2 className="size-3.5" />
-              Delete
-            </button>
+          {isPinned && (
+            <span className="flex items-center gap-1 rounded bg-primary/10 px-1.5 text-[10px] text-primary">
+              <Pin className="size-3" /> Pinned
+            </span>
           )}
+          <span className="text-xs text-muted-foreground">
+            {timeAgo(comment.updatedAt ?? comment.createdAt)}
+            {comment.updatedAt && (
+              <span className="text-muted-foreground/60"> · edited</span>
+            )}
+          </span>
         </div>
+        {editing ? (
+          <div className="mt-1">
+            <textarea
+              value={editBody}
+              onChange={(e) => setEditBody(e.target.value)}
+              rows={2}
+              autoFocus
+              className="w-full resize-none rounded-lg bg-muted p-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <div className="mt-2 flex justify-end gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={saveEdit} disabled={saving || !editBody.trim()}>
+                {saving ? "Saving…" : "Save"}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-foreground/80">
+            {comment.body}
+          </p>
+        )}
+        {!editing && (
+          <div className="mt-1 flex items-center gap-3">
+            <button
+              onClick={toggleLike}
+              className={`flex items-center gap-1 text-xs transition-colors ${
+                liked ? "" : "text-muted-foreground hover:text-foreground/80"
+              }`}
+              aria-pressed={liked}
+            >
+              <ThumbsUp className="size-3.5" />
+              {likeCount > 0 && (
+                <span className="tabular-nums">{formatCount(likeCount)}</span>
+              )}
+            </button>
+            {isAuthor && (
+              <button
+                onClick={startEdit}
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground/80"
+              >
+                <Pencil className="size-3.5" />
+                Edit
+              </button>
+            )}
+            {isOwner && !isReply && (
+              <button
+                onClick={togglePin}
+                disabled={pinning}
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground/80 disabled:opacity-50"
+              >
+                <Pin className="size-3.5" />
+                {isPinned ? "Unpin" : "Pin"}
+              </button>
+            )}
+            {isAuthor && (
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive disabled:opacity-50"
+              >
+                <Trash2 className="size-3.5" />
+                Delete
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-export default function CommentSection({ videoId }: { videoId: string }) {
+export default function CommentSection({
+  videoId,
+  isOwner,
+}: {
+  videoId: string;
+  isOwner: boolean;
+}) {
   const { user } = useAuth();
   const [comments, setComments] = useState<Comment[]>([]);
   const [count, setCount] = useState(0);
@@ -201,6 +308,21 @@ export default function CommentSection({ videoId }: { videoId: string }) {
     },
     [replyTo]
   );
+  const handleEdited = useCallback((id: string, newBody: string) => {
+    setComments((prev) =>
+      prev.map((c) => {
+        if (c.id === id) return { ...c, body: newBody };
+        if (c.replies?.some((r) => r.id === id)) {
+          return {
+            ...c,
+            replies: c.replies.map((r) => (r.id === id ? { ...r, body: newBody } : r)),
+          };
+        }
+        return c;
+      })
+    );
+  }, []);
+
 
   const toggleReplies = useCallback((id: string) => {
     setExpandedReplies((prev) => {
@@ -267,7 +389,10 @@ export default function CommentSection({ videoId }: { videoId: string }) {
                   comment={c}
                   videoId={videoId}
                   isReply={false}
+                  isOwner={isOwner}
                   onDeleted={handleDeleted}
+                  onEdited={handleEdited}
+                  onPinned={load}
                 />
                 <div className="ml-9 flex items-center gap-3">
                   {user && (
@@ -340,7 +465,10 @@ export default function CommentSection({ videoId }: { videoId: string }) {
                       comment={r}
                       videoId={videoId}
                       isReply={true}
+                      isOwner={isOwner}
                       onDeleted={handleDeleted}
+                      onEdited={handleEdited}
+                      onPinned={load}
                     />
                   ))}
               </div>
