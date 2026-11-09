@@ -359,7 +359,7 @@ export default function CommentSection({
   return (
     <section className="flex flex-col gap-5">
       <h2 className="text-base font-medium">
-        {count > 0 ? `${formatCount(count)} comments` : "Comments"}
+        {count > 0 ? `${formatCount(count)} ${count === 1 ? "comment" : "comments"}` : "Comments"}
       </h2>
 
       {user ? (
