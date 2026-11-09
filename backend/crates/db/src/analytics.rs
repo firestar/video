@@ -17,6 +17,7 @@ pub struct DayCount {
 
 /// A top video row for the analytics dashboard.
 #[derive(Debug, FromRow, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TopVideoRow {
     pub id: Uuid,
     pub title: String,
