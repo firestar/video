@@ -31,7 +31,7 @@ pub struct TopVideoRow {
 /// Total views across all of a channel's videos.
 pub async fn total_views(pool: &Pool, channel_id: Uuid) -> Result<i64, sqlx::Error> {
     let n = sqlx::query_scalar::<_, i64>(
-        r#"SELECT COALESCE(SUM(view_count), 0) FROM videos WHERE channel_id = $1"#,
+        r#"SELECT COALESCE(SUM(view_count), 0)::bigint FROM videos WHERE channel_id = $1"#,
     )
     .bind(channel_id)
     .fetch_one(pool)
