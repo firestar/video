@@ -117,6 +117,48 @@ pub async fn update_avatar(
     row.map(row_to_user).transpose()
 }
 
+/// Update the user's profile (name, email, bio). All three are the final
+/// values the handler computed from the current row + the request; `bio`
+/// is None when cleared.
+pub async fn update_profile(
+    pool: &Pool,
+    user_id: Uuid,
+    name: &str,
+    email: &str,
+    bio: Option<String>,
+) -> Result<Option<UserRow>, sqlx::Error> {
+    let row = sqlx::query(
+        r#"
+        UPDATE users SET name = $2, email = $3, bio = $4
+        WHERE id = $1
+        RETURNING *
+        "#,
+    )
+    .bind(user_id)
+    .bind(name)
+    .bind(email)
+    .bind(bio)
+    .fetch_optional(pool)
+    .await?;
+    row.map(row_to_user).transpose()
+}
+
+/// Update the user's password hash (change-password).
+pub async fn update_password_hash(
+    pool: &Pool,
+    user_id: Uuid,
+    password_hash: &str,
+) -> Result<Option<UserRow>, sqlx::Error> {
+    let row = sqlx::query(
+        "UPDATE users SET password_hash = $2 WHERE id = $1 RETURNING *",
+    )
+    .bind(user_id)
+    .bind(password_hash)
+    .fetch_optional(pool)
+    .await?;
+    row.map(row_to_user).transpose()
+}
+
 /// Batch-load users by id (for attaching author info to comments).
 pub async fn find_by_ids(
     pool: &Pool,

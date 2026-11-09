@@ -20,6 +20,7 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<void>;
   logout: () => void;
+  updateUser: (user: User) => void;
 }
 
 const AuthContext = createContext<AuthContextValue>({
@@ -28,6 +29,7 @@ const AuthContext = createContext<AuthContextValue>({
   login: async () => {},
   register: async () => {},
   logout: () => {},
+  updateUser: () => {},
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -77,9 +79,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem("user");
     setUser(null);
   }, []);
+  const updateUser = useCallback((user: User) => {
+    localStorage.setItem("user", JSON.stringify(user));
+    setUser(user);
+  }, []);
+
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, isLoading, login, register, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

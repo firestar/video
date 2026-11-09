@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Menu, Moon, Search, Sun, Upload } from "lucide-react";
+import { Menu, Moon, Search, Sun, Upload, User } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
 import { useSidebarState } from "./SidebarState";
@@ -110,9 +110,18 @@ export default function Navbar() {
 
         {user ? (
           <>
-            <span className="hidden max-w-24 truncate text-sm text-foreground/80 md:inline">
+            <Link
+              href="/account"
+              className="hidden max-w-24 truncate text-sm text-foreground/80 hover:text-foreground md:inline"
+              title="Account settings"
+            >
               {user.name}
-            </span>
+            </Link>
+            <Link href="/account" className="md:hidden" aria-label="Account settings">
+              <Button variant="ghost" size="icon" className="size-9">
+                <User className="size-5" />
+              </Button>
+            </Link>
             <Button variant="ghost" size="sm" onClick={logout}>
               Logout
             </Button>

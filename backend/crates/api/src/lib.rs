@@ -63,7 +63,14 @@ pub fn build_router(state: AppState) -> Router {
             "/api/videos/{id}/comments",
             axum::routing::post(routes::create_comment),
         )
-        .route("/api/me", axum::routing::get(routes::me))
+        .route(
+            "/api/me",
+            axum::routing::get(routes::me).patch(routes::update_me),
+        )
+        .route(
+            "/api/auth/change-password",
+            axum::routing::post(routes::change_password),
+        )
         .route(
             "/api/history",
             axum::routing::get(routes::history)

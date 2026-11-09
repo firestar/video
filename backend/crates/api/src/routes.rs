@@ -38,6 +38,24 @@ pub struct VideoUpdateBody {
     pub publish_at: Option<Option<chrono::DateTime<chrono::Utc>>>,
 }
 
+/// Account PATCH body: update the signed-in user's profile.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeUpdateBody {
+    pub name: Option<String>,
+    pub email: Option<String>,
+    /// None = leave unchanged; Some(s) = set (empty string clears it).
+    pub bio: Option<String>,
+}
+
+/// Change-password body (authenticated).
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangePasswordBody {
+    pub current_password: String,
+    pub new_password: String,
+}
+
 /// Query params for GET /api/home/feed.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -979,19 +997,102 @@ pub async fn presign_upload(
 
 // ---------- Protected routes ----------
 
-/// GET /api/me
+/// GET /api/me — current user, read fresh from the DB so profile edits are
+/// reflected immediately (the JWT claims go stale after a name/email change).
 pub async fn me(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
 ) -> Json<serde_json::Value> {
     let channel_row = channels::find_by_user(&state.db, claims.sub).await.ok().flatten();
+    let user = users::find_by_id(&state.db, claims.sub).await.ok().flatten();
+    let (email, name, channel) = match &user {
+        Some(u) => (u.email.clone(), u.name.clone(), u.channel_name.clone()),
+        None => (claims.email.clone(), claims.name.clone(), claims.channel.clone()),
+    };
     Json(serde_json::json!({
         "id": claims.sub,
-        "email": claims.email,
-        "name": claims.name,
-        "channel": claims.channel,
+        "email": email,
+        "name": name,
+        "channel": channel,
+        "bio": user.as_ref().and_then(|u| u.bio.clone()),
+        "avatarUrl": user.as_ref().and_then(|u| u.avatar_url.clone()),
         "channelId": channel_row.map(|r| r.id.to_string()),
     }))
+}
+
+/// PATCH /api/me — update the signed-in user's name / email / bio.
+pub async fn update_me(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Json(req): Json<MeUpdateBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let current = users::find_by_id(&state.db, claims.sub).await?.ok_or(ApiError::NotFound)?;
+
+    let new_name = req
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| current.name.clone());
+    if new_name.is_empty() {
+        return Err(ApiError::BadRequest("name cannot be empty".into()));
+    }
+
+    let new_email = req
+        .email
+        .as_deref()
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| current.email.clone());
+    if !new_email.contains('@') || !new_email.contains('.') {
+        return Err(ApiError::BadRequest("a valid email is required".into()));
+    }
+    if new_email != current.email
+        && users::find_by_email(&state.db, &new_email).await?.is_some()
+    {
+        return Err(ApiError::Conflict("email already in use".into()));
+    }
+
+    let new_bio = match req.bio {
+        None => current.bio.clone(),
+        Some(s) => {
+            let t = s.trim().to_string();
+            if t.is_empty() { None } else { Some(t) }
+        }
+    };
+
+    let updated = users::update_profile(&state.db, claims.sub, &new_name, &new_email, new_bio)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    Ok(Json(serde_json::json!({
+        "id": updated.id,
+        "email": updated.email,
+        "name": updated.name,
+        "channelName": updated.channel_name,
+        "bio": updated.bio,
+        "avatarUrl": updated.avatar_url,
+    })))
+}
+
+/// POST /api/auth/change-password — verify the current password, set a new one.
+pub async fn change_password(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Json(req): Json<ChangePasswordBody>,
+) -> Result<StatusCode, ApiError> {
+    let row = users::find_by_id(&state.db, claims.sub).await?.ok_or(ApiError::NotFound)?;
+    if !auth::verify_password(&req.current_password, &row.password_hash)? {
+        return Err(ApiError::Unauthorized("current password is incorrect".into()));
+    }
+    if req.new_password.len() < 8 {
+        return Err(ApiError::BadRequest("new password must be at least 8 characters".into()));
+    }
+    let hash = auth::hash_password(&req.new_password)?;
+    users::update_password_hash(&state.db, claims.sub, &hash)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// GET /api/history
