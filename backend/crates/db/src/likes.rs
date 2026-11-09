@@ -145,7 +145,7 @@ pub async fn unlike(
     comment_id: Option<Uuid>,
 ) -> Result<bool, sqlx::Error> {
     let res = sqlx::query(
-        r#"DELETE FROM likes WHERE user_id = $1 AND video_id = $2 AND comment_id = $3 AND kind = 'like'"#,
+        r#"DELETE FROM likes WHERE user_id = $1 AND video_id = $2 AND comment_id IS NOT DISTINCT FROM $3 AND kind = 'like'"#,
     )
     .bind(user_id)
     .bind(video_id)
