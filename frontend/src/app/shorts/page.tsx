@@ -83,7 +83,7 @@ function ShortCard({ short, active }: { short: ShortItem; active: boolean }) {
         </div>
       )}
       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-4 text-white">
-        <Link href={`/watch/${short.id}`} className="text-lg font-semibold hover:underline">
+        <Link href={`/watch/${short.id}`} data-testid="short-title" className="text-lg font-semibold hover:underline">
           {short.title}
         </Link>
         <div className="mt-1 flex items-center gap-2 text-sm text-white/80">
@@ -158,6 +158,7 @@ export default function ShortsPage() {
   return (
     <div
       ref={containerRef}
+      data-testid="shorts-feed"
       tabIndex={0}
       onKeyDown={handleKeyDown}
       className="h-[calc(100dvh-88px)] sm:h-[calc(100dvh-104px)] snap-y snap-mandatory overflow-y-auto overscroll-contain focus:outline-none"
@@ -166,6 +167,7 @@ export default function ShortsPage() {
         <div
           key={s.id}
           data-idx={i}
+          data-testid="short-card"
           ref={(el) => {
             itemRefs.current[i] = el;
           }}
