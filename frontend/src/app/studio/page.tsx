@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -151,6 +151,76 @@ function StudioContent() {
     }
   };
 
+  // --- Custom thumbnail (ready videos only; the worker writes the auto
+  //     thumbnail at finalize, so only ready videos are safe to overwrite). ---
+  const thumbInput = useRef<HTMLInputElement>(null);
+  const thumbTargetRef = useRef<string | null>(null);
+  const [thumbBusyId, setThumbBusyId] = useState<string | null>(null);
+  const MAX_THUMB = 5 * 1024 * 1024; // matches the backend presign limit
+
+  const pickThumbnail = (v: Video) => {
+    thumbTargetRef.current = v.id; // ref: synchronously available in onChange
+    setSavedMsg(null);
+    setError(null);
+    thumbInput.current?.click();
+  };
+
+  const onThumbFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    const target = thumbTargetRef.current;
+    if (!file || !target) return;
+    if (!file.type.startsWith("image/")) {
+      setError("Thumbnail must be an image (JPEG, PNG or WebP).");
+      return;
+    }
+    if (file.size > MAX_THUMB) {
+      setError(`Thumbnail is ${(file.size / 1024 / 1024).toFixed(1)} MB — max 5 MB.`);
+      return;
+    }
+    setThumbBusyId(target);
+    setError(null);
+    setSavedMsg(null);
+    try {
+      const presign = await apiFetch<{ upload_url: string; object_key: string }>(
+        "/api/uploads/presign",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            file_name: file.name,
+            content_type: file.type,
+            size: file.size,
+            purpose: "thumbnail",
+            videoId: target,
+          }),
+        }
+      );
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", presign.upload_url);
+        xhr.setRequestHeader("Content-Type", file.type);
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else reject(new Error(`Thumbnail upload failed (HTTP ${xhr.status})`));
+        };
+        xhr.onerror = () => reject(new Error("Thumbnail upload failed (network error)"));
+        xhr.send(file);
+      });
+      // The API derives thumbnailUrl from storage, so refetch for the fresh signed URL.
+      const detail = await apiFetch<{ thumbnailUrl?: string | null }>(`/api/videos/${target}`);
+      setVideos((prev) =>
+        prev.map((x) =>
+          x.id === target ? { ...x, thumbnailUrl: detail.thumbnailUrl ?? x.thumbnailUrl } : x
+        )
+      );
+      setSavedMsg("Thumbnail updated");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setThumbBusyId(null);
+      thumbTargetRef.current = null;
+    }
+  };
   if (!user) {
     return (
       <div className="flex flex-col items-center gap-4 py-24 text-center">
@@ -189,6 +259,13 @@ function StudioContent() {
 
   return (
     <div className="mx-auto max-w-5xl">
+      <input
+        ref={thumbInput}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        className="hidden"
+        onChange={onThumbFile}
+      />
       <div className="mb-6">
         <h1 className="text-2xl font-bold">Studio</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -347,6 +424,11 @@ function StudioContent() {
                             {publishing === v.id ? "Publishing…" : "Publish now"}
                           </Button>
                         )}
+                         {v.status === "ready" && (
+                           <Button size="sm" variant="outline" onClick={() => pickThumbnail(v)} disabled={thumbBusyId !== null}>
+                             {thumbBusyId === v.id ? "Uploading…" : "Thumbnail"}
+                           </Button>
+                         )}
                         <Button size="sm" variant="outline" onClick={() => startEdit(v)}>
                           Edit
                         </Button>

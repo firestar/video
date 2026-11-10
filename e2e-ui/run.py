@@ -30,6 +30,8 @@ MODULES = [
     "test_03_playlists",
     "test_04_notifications",
     "test_05_shorts",
+    "test_06_big_upload",
+    "test_07_thumbnail",
 ]
 
 

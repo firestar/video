@@ -33,6 +33,8 @@ Prereqs: `ffmpeg` on PATH, `pip install playwright && playwright install chromiu
 | `test_03_playlists` | /playlists → New playlist (real typing) → Create → watch page Save menu → add (checkmark) → API videoCount=1 → playlist page → remove video (X) → videoCount=0 → Delete (confirm dialog) → 404 |
 | `test_04_notifications` | viewer UI: real like click + real-typed comment on owner's video → owner UI: bell → badge 2, panel shows both → click one (marks read, navigates) → badge 1 → Mark all as read → badge gone → API unreadCount=0 |
 | `test_05_shorts` | 3 vertical shorts via /upload (Short checkbox) → worker ready → **phone 375×812**: genuine touch swipe → scroll exactly one card, active 0→1, playing card flips → **desktop 1280×720**: genuine mouse wheel → same |
+| `test_06_big_upload` | generate a **>100 MB** 1080p video (testsrc2 @ 10 Mbit/s) → /upload real file input → title auto-fill → Upload → **prove the S3 multipart path is taken** (network: multipart/init + ≥3× 50 MB part PUTs — a single PUT this size 413s at Cloudflare) → redirect to /watch → worker transcodes to ready → video actually plays |
+| `test_07_thumbnail` | ready video (API) → /studio → click "Thumbnail" on the row → genuine file chooser picks a generated solid-color JPEG → **verify the live site serves the new image** (API thumbnailUrl bytes SHA-256 match the upload) and it differs from the auto frame → studio row img updates |
 
 ## Self-cleaning
 
@@ -52,7 +54,8 @@ the swipe/wheel test, key moments elsewhere).
 
 - The suite targets the deployed site by default, so it exercises the real
   Cloudflare edge, the real worker, and the real storage.
-- Runtime is ~5–10 min: five real videos go through the worker.
+- Runtime is a few minutes: six real videos go through the worker, including
+  the >100 MB big upload (test_06) which adds the longest single upload.
 - Shorts assertions are relative (scroll moved exactly one card, active index
   +1, playing card flipped), so they hold even if the feed contains other
   ready shorts.
