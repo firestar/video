@@ -51,13 +51,15 @@ def run(ctx):
     add_btn = row.locator('button:has-text("Add .vtt / .srt")')
     add_btn.wait_for(state="visible", timeout=10000)
     ui.shot(page, "08 studio panel open")
-    # Genuinely upload the VTT: the panel's "Add .vtt / .srt" button just
-    # clicks a hidden <input type=file>; set the file on it directly (the
-    # language select defaults to "en"). The browser then presigns, PUTs and
-    # registers the track.
-    sub_input = page.locator('input[type="file"][accept*="vtt"]')
-    sub_input.wait_for(state="attached", timeout=10000)
-    sub_input.set_input_files(vtt_path)
+    # Genuinely upload the VTT through the real flow: clicking "Add .vtt / .srt"
+    # sets the target video (subTargetRef) and opens the file chooser (the
+    # language select defaults to "en"); hand the VTT to the chooser via
+    # Playwright's interception. The browser then presigns, PUTs and registers
+    # the track. Setting the hidden input directly would skip the ref and the
+    # handler would silently no-op.
+    with page.expect_file_chooser() as fc:
+        add_btn.click()
+    fc.value.set_files(vtt_path)
     # Give the browser a beat to start the presign/PUT/register before polling.
     time.sleep(3)
     # Poll the API until the track is registered.
@@ -112,13 +114,10 @@ def run(ctx):
     ctx.check("CC button shows the active language",
               cc_btn.inner_text().strip() == "en",
               f"label={cc_btn.inner_text()!r}")
-
-    # Open the menu and switch to Off.
     cc_btn.click()
     off_btn = page.get_by_role("button", name="Off", exact=True)
     off_btn.wait_for(state="visible", timeout=5000)
-    off_btn.click()
-    off_btn.click()
+    off_btn.click()  # selecting Off closes the menu — do not click again
     time.sleep(1)
     state = video.evaluate(
         "v => Array.from(v.textTracks).map(t => ({lang: t.language, mode: t.mode}))"
