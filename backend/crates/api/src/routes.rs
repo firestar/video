@@ -5,7 +5,7 @@ use axum::{Extension, Json};
 use uuid::Uuid;
 
 use auth::encode_token;
-use db::{analytics, channels, comments, history, likes, notifications, playlists, reports, subscriptions, users, videos, watch_later};
+use db::{analytics, channels, comments, history, likes, notifications, playlists, reports, subscriptions, subtitles, users, videos, watch_later};
 use domain::{
     CommentCreate, CommentUpdate, DurationFilter, HistoryQuery, JwtClaims, LoginRequest,
     PlaylistCreate, PlaylistItemAdd, PlaylistUpdate, RegisterRequest, ReportCreate, SearchSort,
@@ -423,6 +423,7 @@ pub async fn get_video(
         &video.title,
         video.duration_secs.map(|d| d as i64),
     );
+    let subtitle_items = signed_subtitles(&state, id).await?;
     Ok(Json(serde_json::json!({
         "video": serde_json::to_value(&video).unwrap(),
         "channel": channel,
@@ -432,6 +433,7 @@ pub async fn get_video(
         "hasDisliked": has_disliked,
         "inWatchLater": in_watch_later,
         "chapters": chapters,
+        "subtitles": subtitle_items,
         "isOwner": is_owner,
         "thumbnailUrl": thumbnail_url.map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
     })))
@@ -595,13 +597,15 @@ pub async fn delete_video(
         return Err(ApiError::Forbidden);
     }
     let video: domain::Video = row.into();
+    // Fetch subtitle object keys BEFORE the row delete (they cascade away).
+    let subtitle_rows = subtitles::list_for_video(&state.db, id).await.unwrap_or_default();
     // Remove the DB row first: if it fails we return an error and the video
     // stays fully intact; if it succeeds, a failed storage delete only leaves
     // orphaned objects (reported in the response), never a broken listing.
     videos::delete(&state.db, id)
         .await?
         .ok_or(ApiError::NotFound)?;
-    // Delete the S3 objects (video file + thumbnail, best-effort).
+    // Delete the S3 objects (video file + thumbnail + subtitles, best-effort).
     let video_key = video.object_key.clone();
     let thumbnail_key = format!("thumbnails/{}.jpg", video.id);
     let video_deleted = if state.storage.exists(&video_key).await.unwrap_or(false) {
@@ -614,11 +618,16 @@ pub async fn delete_video(
     } else {
         false
     };
+    let mut subtitle_deleted: Vec<bool> = Vec::with_capacity(subtitle_rows.len());
+    for r in &subtitle_rows {
+        subtitle_deleted.push(state.storage.delete(&r.object_key).await.is_ok());
+    }
     Ok(Json(serde_json::json!({
         "deleted": true,
         "video": serde_json::to_value(&video).unwrap(),
         "videoObjectDeleted": video_deleted,
         "thumbnailDeleted": thumbnail_deleted,
+        "subtitlesDeleted": subtitle_deleted,
     })))
 }
 
@@ -990,6 +999,52 @@ pub async fn presign_upload(
             }
             format!("thumbnails/{}.jpg", video_id)
         }
+        "subtitle" => {
+            if size > 2 * 1024 * 1024 {
+                return Err(ApiError::BadRequest("subtitle max 2 MB".into()));
+            }
+            let ext = file_name
+                .rsplit('.')
+                .next()
+                .map(str::to_ascii_lowercase)
+                .unwrap_or_default();
+            let ok_type = matches!(
+                content_type,
+                Some("text/vtt") | Some("text/srt") | Some("text/plain")
+            );
+            if !matches!(ext.as_str(), "vtt" | "srt") || !ok_type {
+                return Err(ApiError::BadRequest(
+                    "subtitle must be a .vtt or .srt file (text/vtt or text/srt)".into(),
+                ));
+            }
+            let video_id = req
+                .get("videoId")
+                .and_then(|v| v.as_str())
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .ok_or_else(|| ApiError::BadRequest("videoId required".into()))?;
+            let language = req
+                .get("language")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| ApiError::BadRequest("language required".into()))?;
+            if !valid_language_tag(language) {
+                return Err(ApiError::BadRequest(
+                    "language must be a BCP-47 tag like 'en' or 'pt-br'".into(),
+                ));
+            }
+            // Ownership: the video's channel must belong to the current user.
+            let vrow = videos::find_by_id(&state.db, video_id)
+                .await?
+                .ok_or(ApiError::NotFound)?;
+            let ch = channels::find_by_id(&state.db, vrow.channel_id)
+                .await?
+                .ok_or(ApiError::NotFound)?;
+            if ch.user_id != claims.sub {
+                return Err(ApiError::Forbidden);
+            }
+            format!("subtitles/{}_{}.{}", video_id, normalize_language(language), ext)
+        }
         _ => format!("videos/{}", Uuid::new_v4()),
     };
     let upload_url = state
@@ -1006,6 +1061,213 @@ pub async fn presign_upload(
         "object_key": object_key,
     })))
 }
+// ---------------------------------------------------------------------------
+// Subtitles (caption tracks)
+// ---------------------------------------------------------------------------
+
+/// Body for POST /api/videos/{id}/subtitles.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubtitleCreate {
+    pub language: String,
+    pub object_key: String,
+}
+
+/// Loose BCP-47 validation: a 2-3 letter primary subtag plus at most one
+/// 2-4 letter subtag (e.g. "en", "pt", "pt-br", "zh-hans").
+fn valid_language_tag(tag: &str) -> bool {
+    let parts: Vec<&str> = tag.split('-').collect();
+    if parts.len() > 2 {
+        return false;
+    }
+    let primary = parts[0];
+    if !(2..=3).contains(&primary.len()) || !primary.chars().all(|c| c.is_ascii_alphabetic()) {
+        return false;
+    }
+    if parts.len() == 2 {
+        let sub = parts[1];
+        if !(2..=4).contains(&sub.len()) || !sub.chars().all(|c| c.is_ascii_alphabetic()) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Normalize a language tag for storage/keys: trim + lowercase.
+fn normalize_language(tag: &str) -> String {
+    tag.trim().to_ascii_lowercase()
+}
+
+/// Convert an SRT document to WebVTT (the only format the browser's
+/// `<track>` element supports). SRT cues: an optional numeric index line,
+/// a timing line with millisecond commas, then text lines.
+fn srt_to_vtt(srt: &str) -> String {
+    let mut out = String::from("WEBVTT\n\n");
+    for raw_block in srt.replace('\r', "").split("\n\n") {
+        let block = raw_block.trim();
+        if block.is_empty() {
+            continue;
+        }
+        let mut lines: Vec<&str> = block.lines().collect();
+        // Drop the numeric cue index line (SRT only).
+        if let Some(first) = lines.first() {
+            let t = first.trim();
+            if !t.is_empty() && t.chars().all(|c| c.is_ascii_digit()) {
+                lines.remove(0);
+            }
+        }
+        for (i, line) in lines.iter().enumerate() {
+            let t = line.trim_end();
+            if i == 0 && t.contains("-->") {
+                // Timing line: SRT uses ,ms; WebVTT uses .ms.
+                out.push_str(t.replace(',', ".").trim());
+            } else if !t.is_empty() {
+                out.push_str(t);
+            }
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// Sign every track of a video for a response (24h TTL).
+async fn signed_subtitles(
+    state: &AppState,
+    video_id: Uuid,
+) -> Result<Vec<serde_json::Value>, ApiError> {
+    let rows = subtitles::list_for_video(&state.db, video_id).await?;
+    let ttl = std::time::Duration::from_secs(24 * 3600);
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        let url = state
+            .storage
+            .signed_get(&r.object_key, ttl)
+            .await
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("storage: {e}")))?;
+        out.push(serde_json::json!({
+            "language": r.language,
+            "format": r.format,
+            "url": url,
+        }));
+    }
+    Ok(out)
+}
+
+/// POST /api/videos/{id}/subtitles — register an uploaded caption track
+/// (owner only). The file must already be in storage (presign with purpose
+/// "subtitle", then PUT). SRT objects are converted to WebVTT in place.
+pub async fn register_subtitle(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<SubtitleCreate>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let language = normalize_language(&req.language);
+    if !valid_language_tag(&language) {
+        return Err(ApiError::BadRequest(
+            "language must be a BCP-47 tag like 'en' or 'pt-br'".into(),
+        ));
+    }
+    let row = videos::find_by_id(&state.db, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let channel = channels::find_by_id(&state.db, row.channel_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if channel.user_id != claims.sub {
+        return Err(ApiError::Forbidden);
+    }
+    if !state.storage.exists(&req.object_key).await.unwrap_or(false) {
+        return Err(ApiError::BadRequest(
+            "uploaded file not found in storage — presign and PUT first".into(),
+        ));
+    }
+    // SRT → WebVTT: the browser's <track> element only supports VTT.
+    let final_key = if req.object_key.ends_with(".srt") {
+        let bytes = state
+            .storage
+            .download(&req.object_key)
+            .await
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("storage: {e}")))?;
+        let text = String::from_utf8_lossy(&bytes);
+        let vtt = srt_to_vtt(&text);
+        let vtt_key = format!("subtitles/{}_{}.vtt", id, language);
+        state
+            .storage
+            .upload(&vtt_key, vtt.into_bytes().into(), "text/vtt")
+            .await
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("storage: {e}")))?;
+        // Best-effort: remove the original SRT object.
+        let _ = state.storage.delete(&req.object_key).await;
+        vtt_key
+    } else {
+        req.object_key.clone()
+    };
+    let saved = subtitles::upsert(&state.db, id, &language, "vtt", &final_key).await?;
+    let url = state
+        .storage
+        .signed_get(&saved.object_key, std::time::Duration::from_secs(24 * 3600))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("storage: {e}")))?;
+    Ok(Json(serde_json::json!({
+        "subtitle": {
+            "language": saved.language,
+            "format": saved.format,
+            "url": url,
+        }
+    })))
+}
+
+/// GET /api/videos/{id}/subtitles — public list of tracks with signed URLs.
+/// Private videos are owner-only (404, matching get_video).
+pub async fn list_subtitles(
+    State(state): State<AppState>,
+    claims: Option<Extension<JwtClaims>>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let row = videos::find_by_id(&state.db, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if row.visibility == "private" {
+        let channel: Option<domain::Channel> = channels::find_by_id(&state.db, row.channel_id)
+            .await?
+            .map(Into::into);
+        let allowed = matches!(
+            (claims.as_ref(), &channel),
+            (Some(c), Some(ch)) if ch.user_id == c.sub
+        );
+        if !allowed {
+            return Err(ApiError::NotFound);
+        }
+    }
+    let items = signed_subtitles(&state, id).await?;
+    Ok(Json(serde_json::json!({ "subtitles": items })))
+}
+
+/// DELETE /api/videos/{id}/subtitles/{language} — remove a track (owner).
+pub async fn delete_subtitle(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Path((id, language)): Path<(Uuid, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let row = videos::find_by_id(&state.db, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let channel = channels::find_by_id(&state.db, row.channel_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if channel.user_id != claims.sub {
+        return Err(ApiError::Forbidden);
+    }
+    let language = normalize_language(&language);
+    let removed = subtitles::delete(&state.db, id, &language).await?;
+    if let Some(r) = &removed {
+        let _ = state.storage.delete(&r.object_key).await;
+    }
+    Ok(Json(serde_json::json!({ "deleted": removed.is_some() })))
+}
+
 /// Part size for multipart uploads. Kept well under Cloudflare's 100 MB
 /// request-body cap so every part PUT clears the proxy.
 const MULTIPART_PART_SIZE: i64 = 50 * 1024 * 1024; // 50 MB

@@ -10,6 +10,7 @@ pub mod pool;
 pub mod playlists;
 pub mod reports;
 pub mod subscriptions;
+pub mod subtitles;
 pub mod users;
 pub mod videos;
 pub mod watch_later;

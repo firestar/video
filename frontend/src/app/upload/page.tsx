@@ -13,6 +13,11 @@ const MAX_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
 // single request exceeds Cloudflare's 100 MB body cap. Smaller files use a
 // single presigned PUT.
 const MULTIPART_THRESHOLD = 50 * 1024 * 1024; // 50 MB
+const SUB_LANGUAGES = [
+  "en", "es", "fr", "de", "pt", "it", "ru", "ja", "ko", "zh",
+  "ar", "hi", "nl", "pl", "tr", "sv", "da", "no", "fi", "cs",
+  "el", "he", "id", "th", "vi", "uk", "ro", "hu", "ms", "fa",
+];
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -49,7 +54,7 @@ function putPart(
   });
 }
 
-type Phase = "idle" | "presign" | "uploading" | "creating";
+type Phase = "idle" | "presign" | "uploading" | "creating" | "subtitles";
 
 export default function UploadPage() {
   const { user, isLoading } = useAuth();
@@ -72,6 +77,10 @@ export default function UploadPage() {
   const [error, setError] = useState<string | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const [subFile, setSubFile] = useState<File | null>(null);
+  const [subLang, setSubLang] = useState("en");
+  const [subLangOther, setSubLangOther] = useState("");
+  const subInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!isLoading && !user) {
@@ -213,11 +222,63 @@ export default function UploadPage() {
         }),
       });
 
-      router.push(`/watch/${created.video.id}`);
+       const videoId = created.video.id;
+
+       if (subFile && effectiveSubLang) {
+         setPhase("subtitles");
+         try {
+           await uploadSubtitle(videoId, subFile, effectiveSubLang);
+         } catch (e) {
+           setError(
+             (e instanceof Error ? e.message : "Subtitle upload failed") +
+               " — the video itself was uploaded; you can add subtitles in Studio."
+           );
+           setPhase("idle");
+           return;
+         }
+       }
+
+       router.push(`/watch/${videoId}`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Upload failed");
       setPhase("idle");
     }
+  };
+
+  const effectiveSubLang =
+    subLang === "other" ? subLangOther.trim().toLowerCase() : subLang;
+
+  /** Presign → PUT → register one caption track for an existing video. */
+  const uploadSubtitle = async (videoId: string, f: File, lang: string) => {
+    const presign = await apiFetch<{ upload_url: string; object_key: string }>(
+      "/api/uploads/presign",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          file_name: f.name,
+          content_type: f.type || "text/vtt",
+          size: f.size,
+          purpose: "subtitle",
+          videoId,
+          language: lang,
+        }),
+      }
+    );
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", presign.upload_url);
+      xhr.setRequestHeader("Content-Type", f.type || "text/vtt");
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else reject(new Error(`Subtitle upload failed (HTTP ${xhr.status})`));
+      };
+      xhr.onerror = () => reject(new Error("Subtitle upload failed (network error)"));
+      xhr.send(f);
+    });
+    await apiFetch(`/api/videos/${videoId}/subtitles`, {
+      method: "POST",
+      body: JSON.stringify({ language: lang, objectKey: presign.object_key }),
+    });
   };
 
   const busy = phase !== "idle";
@@ -401,6 +462,72 @@ export default function UploadPage() {
               </span>
             </label>
           </div>
+          <div>
+            <p className="mb-2 text-sm font-medium">Subtitles (optional)</p>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <select
+                  value={subLang}
+                  onChange={(e) => setSubLang(e.target.value)}
+                  disabled={busy}
+                  className="h-9 rounded-md border border-border bg-transparent px-2 text-sm focus:outline-none"
+                >
+                  {SUB_LANGUAGES.map((l) => (
+                    <option key={l} value={l}>{l}</option>
+                  ))}
+                  <option value="other">Other…</option>
+                </select>
+                {subLang === "other" && (
+                  <Input
+                    placeholder="code (e.g. pt-br)"
+                    value={subLangOther}
+                    onChange={(e) => setSubLangOther(e.target.value)}
+                    disabled={busy}
+                    className="max-w-[120px]"
+                  />
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => subInputRef.current?.click()}
+                >
+                  {subFile ? "Change file" : "Choose .vtt / .srt file"}
+                </Button>
+                {subFile && (
+                  <span className="truncate text-sm text-muted-foreground">{subFile.name}</span>
+                )}
+                {subFile && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => setSubFile(null)}
+                  >
+                    Remove
+                  </Button>
+                )}
+                <input
+                  ref={subInputRef}
+                  type="file"
+                  accept=".vtt,.srt,text/vtt,text/srt"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) setSubFile(f);
+                    e.target.value = "";
+                  }}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                WebVTT (.vtt) or SubRip (.srt), up to 2 MB.
+              </p>
+            </div>
+          </div>
           {phase === "uploading" && (
             <div>
               <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
@@ -418,6 +545,9 @@ export default function UploadPage() {
           {phase === "creating" && (
             <p className="text-sm text-muted-foreground">Upload complete. Finalizing…</p>
           )}
+          {phase === "subtitles" && (
+            <p className="text-sm text-muted-foreground">Uploading subtitles…</p>
+          )}
 
           {error && <p className="text-sm text-destructive">{error}</p>}
 
@@ -432,7 +562,9 @@ export default function UploadPage() {
                 ? "Finalizing…"
                 : phase === "presign"
                   ? "Preparing…"
-                  : "Upload"}
+                  : phase === "subtitles"
+                    ? "Uploading subtitles…"
+                    : "Upload"}
           </Button>
         </CardContent>
       </Card>

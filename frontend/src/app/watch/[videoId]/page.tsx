@@ -8,12 +8,12 @@ import { formatCount, formatDate, formatDuration } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import CommentSection from "@/components/CommentSection";
 import ReportDialog from "@/components/ReportDialog";
-import { Bell, BellOff, ThumbsUp, ThumbsDown, SlidersHorizontal, Check, ListVideo, Plus, Share2, Repeat, Gauge, Clock, RectangleHorizontal, Flag, X } from "lucide-react";
+import { Bell, BellOff, Captions, Check, Clock, Flag, Gauge, ListVideo, Plus, RectangleHorizontal, Repeat, Share2, SlidersHorizontal, ThumbsDown, ThumbsUp, X } from "lucide-react";
 import RelatedVideos from "@/components/RelatedVideos";
 import WatchQueue from "@/components/WatchQueue";
 import { useWatchQueue, WatchQueueProvider } from "@/lib/watch-queue";
 import { WatchPageSkeleton } from "@/components/Skeletons";
-import type { Video, Playlist, Chapter } from "@/lib/types";
+import type { Chapter, Playlist, Subtitle, Video, VideoVisibility } from "@/lib/types";
 
 interface Stream {
   quality: string;
@@ -32,6 +32,7 @@ interface WatchData {
   hasDisliked?: boolean;
   inWatchLater?: boolean;
   chapters: Chapter[];
+  subtitles?: Subtitle[];
   isOwner?: boolean;
 }
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
@@ -149,6 +150,9 @@ function WatchContent() {
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [loopOn, setLoopOn] = useState(false);
+  const [ccLang, setCcLang] = useState<string | null>(null);
+  const [ccOpen, setCcOpen] = useState(false);
+  const subtitlesRef = useRef<Subtitle[]>([]);
   const [theater, setTheater] = useState(false);
   useEffect(() => {
     try {
@@ -215,6 +219,8 @@ function WatchContent() {
         setDisliked(d.hasDisliked ?? false);
         setInWatchLater(d.inWatchLater ?? false);
         setViewCount(d.video.viewCount ?? 0);
+        // Auto-enable the first caption track (YouTube behavior).
+        setCcLang((cur) => cur ?? d.subtitles?.[0]?.language ?? null);
         if (!viewedRef.current && getToken()) {
           viewedRef.current = true;
           apiFetch(`/api/videos/${videoId}/view`, { method: "POST" }).catch(() => {});
@@ -256,6 +262,7 @@ function WatchContent() {
 
   const streams = data?.streams ?? [];
   const chapters = data?.chapters ?? [];
+  const subtitles = data?.subtitles ?? [];
   const seekToChapter = useCallback((secs: number) => {
     const el = videoRef.current;
     if (el) el.currentTime = secs;
@@ -288,6 +295,22 @@ function WatchContent() {
     el.playbackRate = speed;
     el.loop = loopOn;
   }, [speed, loopOn, currentUrl, videoId]);
+
+  // Apply caption track modes (the `default` attribute alone won't re-apply
+  // when the selection or the media changes).
+  useEffect(() => {
+    subtitlesRef.current = subtitles;
+    const el = videoRef.current;
+    if (!el) return;
+    const apply = () => {
+      for (const track of Array.from(el.textTracks)) {
+        track.mode = ccLang && track.language === ccLang ? "showing" : "hidden";
+      }
+    };
+    apply();
+    el.addEventListener("loadedmetadata", apply);
+    return () => el.removeEventListener("loadedmetadata", apply);
+  }, [ccLang, subtitles, currentUrl, videoId]);
 
   // YouTube-style keyboard shortcuts (ignored while typing in a field).
   useEffect(() => {
@@ -338,6 +361,9 @@ function WatchContent() {
         case "arrowdown":
           e.preventDefault();
           el.volume = Math.max(0, el.volume - 0.05);
+          break;
+        case "c":
+          setCcLang((cur) => (cur ? null : subtitlesRef.current[0]?.language ?? null));
           break;
         default:
           if (/^[0-9]$/.test(k)) {
@@ -526,7 +552,17 @@ function WatchContent() {
                   }}
                  onEnded={handleEnded}
                  className="aspect-video w-full rounded-lg bg-black"
-               />
+                >
+                  {subtitles.map((s) => (
+                    <track
+                      key={s.language}
+                      kind="subtitles"
+                      srcLang={s.language}
+                      src={s.url}
+                      label={s.language}
+                    />
+                  ))}
+                </video>
                <div className="absolute right-3 top-3 z-10 flex items-start gap-2">
                  <button
                    onClick={() => setLoopOn((l) => !l)}
@@ -619,6 +655,56 @@ function WatchContent() {
                      )}
                    </div>
                  )}
+                  {subtitles.length > 0 && (
+                    <div className="relative">
+                      <button
+                        onClick={() => setCcOpen((o) => !o)}
+                        title="Subtitles (c)"
+                        className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium backdrop-blur transition-colors ${
+                          ccLang
+                            ? "bg-white text-black"
+                            : "bg-black/70 text-white hover:bg-black/90"
+                        }`}
+                      >
+                        <Captions className="size-3.5" />
+                        {ccLang ?? "CC"}
+                      </button>
+                      {ccOpen && (
+                        <div className="absolute right-0 mt-1 w-36 overflow-hidden rounded-md bg-black/90 py-1 text-xs text-white shadow-lg backdrop-blur">
+                          <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-white/50">
+                            Subtitles
+                          </div>
+                          <button
+                            onClick={() => {
+                              setCcLang(null);
+                              setCcOpen(false);
+                            }}
+                            className={`flex w-full items-center justify-between px-3 py-1.5 hover:bg-white/10 ${
+                              !ccLang ? "font-semibold" : "text-white/80"
+                            }`}
+                          >
+                            <span>Off</span>
+                            {!ccLang && <Check className="size-3.5" />}
+                          </button>
+                          {subtitles.map((s) => (
+                            <button
+                              key={s.language}
+                              onClick={() => {
+                                setCcLang(s.language);
+                                setCcOpen(false);
+                              }}
+                              className={`flex w-full items-center justify-between px-3 py-1.5 hover:bg-white/10 ${
+                                ccLang === s.language ? "font-semibold" : "text-white/80"
+                              }`}
+                            >
+                              <span>{s.language}</span>
+                              {ccLang === s.language && <Check className="size-3.5" />}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                </div>
              </div>
           ) : (

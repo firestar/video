@@ -49,6 +49,13 @@ export interface Chapter {
   title: string;
 }
 
+/** A caption track for a video (from GET /api/videos/{id}). */
+export interface Subtitle {
+  language: string;
+  format: string;
+  url: string;
+}
+
 
 export interface Comment {
   id: string;

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
-import type { Video, VideoVisibility } from "@/lib/types";
+import type { Subtitle, Video, VideoVisibility } from "@/lib/types";
 import AnalyticsDashboard from "@/components/AnalyticsDashboard";
 
 interface MeResponse {
@@ -33,6 +33,12 @@ function toLocalInput(iso?: string | null) {
   const pad = (n: number) => n.toString().padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+const SUB_LANGUAGES = [
+  "en", "es", "fr", "de", "pt", "it", "ru", "ja", "ko", "zh",
+  "ar", "hi", "nl", "pl", "tr", "sv", "da", "no", "fi", "cs",
+  "el", "he", "id", "th", "vi", "uk", "ro", "hu", "ms", "fa",
+];
+
 
 function StudioContent() {
   const { user, logout } = useAuth();
@@ -220,6 +226,115 @@ function StudioContent() {
       setThumbBusyId(null);
       thumbTargetRef.current = null;
     }
+
+  };
+  // --- Subtitles: list / add / remove caption tracks per video. ---
+  const subInput = useRef<HTMLInputElement>(null);
+  const subTargetRef = useRef<string | null>(null);
+  const [subLang, setSubLang] = useState("en");
+  const [subLangOther, setSubLangOther] = useState("");
+  const [subBusyId, setSubBusyId] = useState<string | null>(null);
+  const [subPanelId, setSubPanelId] = useState<string | null>(null);
+  const [subTracks, setSubTracks] = useState<Record<string, Subtitle[]>>({});
+  const MAX_SUB = 2 * 1024 * 1024; // matches the backend presign limit
+
+  const loadSubs = async (videoId: string) => {
+    const rows = await apiFetch<Subtitle[]>(`/api/videos/${videoId}/subtitles`);
+    setSubTracks((prev) => ({ ...prev, [videoId]: rows }));
+    return rows;
+  };
+
+  const openSubPanel = async (v: Video) => {
+    setSubPanelId(v.id);
+    setError(null);
+    setSavedMsg(null);
+    try {
+      await loadSubs(v.id);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const pickSubtitle = (v: Video) => {
+    subTargetRef.current = v.id; // ref: synchronously available in onChange
+    setError(null);
+    setSavedMsg(null);
+    subInput.current?.click();
+  };
+
+  const onSubFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    const target = subTargetRef.current;
+    if (!file || !target) return;
+    const lang = subLang === "other" ? subLangOther.trim().toLowerCase() : subLang;
+    if (!/^[a-z]{2,3}(-[a-z]{2,4})?$/.test(lang)) {
+      setError("Language code must look like 'en' or 'pt-br'.");
+      return;
+    }
+    if (!/\.(vtt|srt)$/i.test(file.name) && !["text/vtt", "text/srt"].includes(file.type)) {
+      setError("Subtitles must be a .vtt or .srt file.");
+      return;
+    }
+    if (file.size > MAX_SUB) {
+      setError(`Subtitle is ${(file.size / 1024 / 1024).toFixed(1)} MB — max 2 MB.`);
+      return;
+    }
+    setSubBusyId(target);
+    setError(null);
+    setSavedMsg(null);
+    try {
+      const presign = await apiFetch<{ upload_url: string; object_key: string }>(
+        "/api/uploads/presign",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            file_name: file.name,
+            content_type: file.type || "text/vtt",
+            size: file.size,
+            purpose: "subtitle",
+            videoId: target,
+            language: lang,
+          }),
+        }
+      );
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", presign.upload_url);
+        xhr.setRequestHeader("Content-Type", file.type || "text/vtt");
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else reject(new Error(`Subtitle upload failed (HTTP ${xhr.status})`));
+        };
+        xhr.onerror = () => reject(new Error("Subtitle upload failed (network error)"));
+        xhr.send(file);
+      });
+      await apiFetch(`/api/videos/${target}/subtitles`, {
+        method: "POST",
+        body: JSON.stringify({ language: lang, objectKey: presign.object_key }),
+      });
+      await loadSubs(target);
+      setSavedMsg(`Subtitles (${lang}) uploaded`);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSubBusyId(null);
+      subTargetRef.current = null;
+    }
+  };
+
+  const deleteSubtitle = async (v: Video, lang: string) => {
+    setError(null);
+    setSavedMsg(null);
+    try {
+      await apiFetch(`/api/videos/${v.id}/subtitles/${encodeURIComponent(lang)}`, {
+        method: "DELETE",
+      });
+      await loadSubs(v.id);
+      setSavedMsg(`Subtitles (${lang}) removed`);
+    } catch (err) {
+      setError((err as Error).message);
+    }
   };
   if (!user) {
     return (
@@ -265,6 +380,14 @@ function StudioContent() {
         accept="image/jpeg,image/png,image/webp"
         className="hidden"
         onChange={onThumbFile}
+
+      />
+      <input
+        ref={subInput}
+        type="file"
+        accept=".vtt,.srt,text/vtt,text/srt"
+        className="hidden"
+        onChange={onSubFile}
       />
       <div className="mb-6">
         <h1 className="text-2xl font-bold">Studio</h1>
@@ -306,7 +429,8 @@ function StudioContent() {
           {videos.map((v) => {
             const isEditing = editing === v.id;
             return (
-              <div key={v.id} data-video-id={v.id} className="flex items-center gap-4 rounded-lg border border-border bg-background p-3">
+              <div key={v.id} data-video-id={v.id} className="rounded-lg border border-border bg-background p-3">
+                <div className="flex items-center gap-4">
                 <div className="size-24 shrink-0 overflow-hidden rounded-md bg-muted sm:size-28">
                   {v.thumbnailUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -428,7 +552,11 @@ function StudioContent() {
                            <Button size="sm" variant="outline" onClick={() => pickThumbnail(v)} disabled={thumbBusyId !== null}>
                              {thumbBusyId === v.id ? "Uploading…" : "Thumbnail"}
                            </Button>
+
                          )}
+                          <Button size="sm" variant="outline" onClick={() => openSubPanel(v)}>
+                            Subtitles
+                          </Button>
                         <Button size="sm" variant="outline" onClick={() => startEdit(v)}>
                           Edit
                         </Button>
@@ -437,8 +565,66 @@ function StudioContent() {
                         </Button>
                       </div>
                     </div>
+
                   )}
                 </div>
+                </div>
+                {subPanelId === v.id && (
+                  <div className="mt-3 rounded-md border border-border bg-muted/30 p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <p className="text-sm font-medium">Subtitles</p>
+                      <button
+                        onClick={() => setSubPanelId(null)}
+                        className="text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        Close
+                      </button>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      {(subTracks[v.id] ?? []).length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No subtitle tracks yet.</p>
+                      ) : (
+                        (subTracks[v.id] ?? []).map((s) => (
+                          <div
+                            key={s.language}
+                            className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2 text-sm"
+                          >
+                            <span className="font-medium">{s.language}</span>
+                            <Button size="sm" variant="ghost" onClick={() => deleteSubtitle(v, s.language)}>
+                              Remove
+                            </Button>
+                          </div>
+                        ))
+                      )}
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={subLang}
+                          onChange={(e) => setSubLang(e.target.value)}
+                          disabled={subBusyId !== null}
+                          className="h-8 rounded-md border border-border bg-background px-2 text-sm outline-none"
+                        >
+                          {SUB_LANGUAGES.map((l) => (
+                            <option key={l} value={l}>{l}</option>
+                          ))}
+                          <option value="other">Other…</option>
+                        </select>
+                        {subLang === "other" && (
+                          <input
+                            type="text"
+                            placeholder="code (e.g. pt-br)"
+                            value={subLangOther}
+                            onChange={(e) => setSubLangOther(e.target.value)}
+                            disabled={subBusyId !== null}
+                            className="h-8 w-28 rounded-md border border-border bg-background px-2 text-sm outline-none"
+                          />
+                        )}
+                        <Button size="sm" variant="outline" onClick={() => pickSubtitle(v)} disabled={subBusyId !== null}>
+                          {subBusyId === v.id ? "Uploading…" : "Add .vtt / .srt"}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
