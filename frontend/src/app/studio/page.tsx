@@ -239,7 +239,8 @@ function StudioContent() {
   const MAX_SUB = 2 * 1024 * 1024; // matches the backend presign limit
 
   const loadSubs = async (videoId: string) => {
-    const rows = await apiFetch<Subtitle[]>(`/api/videos/${videoId}/subtitles`);
+    const body = await apiFetch<{ subtitles: Subtitle[] }>(`/api/videos/${videoId}/subtitles`);
+    const rows = body && Array.isArray(body.subtitles) ? body.subtitles : [];
     setSubTracks((prev) => ({ ...prev, [videoId]: rows }));
     return rows;
   };
