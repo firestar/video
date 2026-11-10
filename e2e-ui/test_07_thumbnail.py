@@ -55,6 +55,9 @@ def run(ctx):
         return
 
     # Baseline: the auto-generated thumbnail the worker produced.
+    # NOTE: use the TOP-LEVEL `thumbnailUrl` (a fresh signed GET). The nested
+    # `video.thumbnailUrl` is the DB-stored public URL, which 403s on a private
+    # bucket — the frontend never uses it (it always renders the signed URL).
     s, detail = ctx.client.get(f"/api/videos/{vid}")
     base_url = detail.get("thumbnailUrl") if isinstance(detail, dict) else None
     base_bytes = b""
