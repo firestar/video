@@ -102,7 +102,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/videos/{id}/like",
             axum::routing::delete(routes::unlike_video),
         )
-        .route("/videos/{id}/subtitles", axum::routing::get(routes::list_subtitles))
+        .route("/api/videos/{id}/subtitles", axum::routing::get(routes::list_subtitles))
         .route(
             "/api/videos/{id}/dislike",
             axum::routing::post(routes::dislike_video),
@@ -162,8 +162,8 @@ pub fn build_router(state: AppState) -> Router {
             "/api/notifications/read-all",
             axum::routing::post(routes::mark_all_notifications_read),
         )
-        .route("/videos/{id}/subtitles", axum::routing::post(routes::register_subtitle))
-        .route("/videos/{id}/subtitles/{language}", axum::routing::delete(routes::delete_subtitle))
+        .route("/api/videos/{id}/subtitles", axum::routing::post(routes::register_subtitle))
+        .route("/api/videos/{id}/subtitles/{language}", axum::routing::delete(routes::delete_subtitle))
          .route(
              "/api/notifications/{id}/read",
              axum::routing::post(routes::mark_notification_read),

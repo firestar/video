@@ -32,6 +32,7 @@ MODULES = [
     "test_05_shorts",
     "test_06_big_upload",
     "test_07_thumbnail",
+    "test_08_subtitles",
 ]
 
 
