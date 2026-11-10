@@ -8,7 +8,7 @@ import { formatCount, formatDate, formatDuration } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import CommentSection from "@/components/CommentSection";
 import ReportDialog from "@/components/ReportDialog";
-import { Bell, BellOff, Captions, Check, Clock, Flag, Gauge, ListVideo, Plus, RectangleHorizontal, Repeat, Share2, SlidersHorizontal, ThumbsDown, ThumbsUp, X } from "lucide-react";
+import { Bell, BellOff, Captions, Check, Clock, Code, Flag, Gauge, ListVideo, Plus, RectangleHorizontal, Repeat, Share2, SlidersHorizontal, ThumbsDown, ThumbsUp, X } from "lucide-react";
 import RelatedVideos from "@/components/RelatedVideos";
 import WatchQueue from "@/components/WatchQueue";
 import { useWatchQueue, WatchQueueProvider } from "@/lib/watch-queue";
@@ -78,6 +78,28 @@ function WatchContent() {
     }
   }, [videoId]);
 
+  const [embedOpen, setEmbedOpen] = useState(false);
+  const [embedCopied, setEmbedCopied] = useState(false);
+  const getEmbedSnippet = useCallback(() => {
+    const title = (data?.video.title ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+    return `<iframe src="${window.location.origin}/embed/${videoId}" width="560" height="315" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen title="${title}"></iframe>`;
+  }, [videoId, data?.video.title]);
+  const copyEmbed = useCallback(async () => {
+    if (!videoId) return;
+    const snippet = getEmbedSnippet();
+    try {
+      await navigator.clipboard.writeText(snippet);
+      setEmbedCopied(true);
+      setTimeout(() => setEmbedCopied(false), 2000);
+    } catch {
+      // Fallback: prompt with the snippet
+      window.prompt("Copy this embed code:", snippet);
+    }
+  }, [videoId, getEmbedSnippet]);
   const loadPlaylists = useCallback(async () => {
     if (!getToken()) return;
     try {
@@ -799,6 +821,48 @@ function WatchContent() {
                 {copied ? <Check className="size-4" /> : <Share2 className="size-4" />}
                 {copied ? "Copied!" : "Share"}
               </button>
+               <div className="relative">
+                 <button
+                   onClick={() => setEmbedOpen((o) => !o)}
+                   className={`flex h-9 items-center gap-2 rounded-full border border-border pl-4 pr-3 text-sm hover:bg-muted ${
+                     embedCopied ? "text-green-500" : "text-muted-foreground"
+                   }`}
+                   aria-label="Embed video"
+                 >
+                   {embedCopied ? <Check className="size-4" /> : <Code className="size-4" />}
+                   {embedCopied ? "Copied!" : "Embed"}
+                 </button>
+                 {embedOpen && (
+                   <>
+                     <div
+                       className="fixed inset-0 z-20"
+                       onClick={() => setEmbedOpen(false)}
+                     />
+                     <div className="absolute left-0 top-full z-30 mt-2 w-80 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-lg">
+                       <div className="mb-2 flex items-center justify-between">
+                         <span className="text-sm font-medium">Embed</span>
+                         <button
+                           onClick={() => setEmbedOpen(false)}
+                           aria-label="Close embed dialog"
+                           className="text-muted-foreground hover:text-foreground"
+                         >
+                           <X className="size-4" />
+                         </button>
+                       </div>
+                       <textarea
+                         readOnly
+                         rows={3}
+                         value={getEmbedSnippet()}
+                         onFocus={(e) => e.currentTarget.select()}
+                         className="w-full resize-none rounded-md border border-border bg-muted/50 p-2 font-mono text-xs"
+                       />
+                       <Button size="sm" className="mt-2 w-full" onClick={copyEmbed}>
+                         {embedCopied ? "Copied!" : "Copy embed code"}
+                       </Button>
+                     </div>
+                   </>
+                 )}
+               </div>
                <button
                  onClick={toggleWatchLater}
                  aria-pressed={inWatchLater}

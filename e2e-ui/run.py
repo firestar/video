@@ -33,6 +33,7 @@ MODULES = [
     "test_06_big_upload",
     "test_07_thumbnail",
     "test_08_subtitles",
+    "test_09_embed",
 ]
 
 

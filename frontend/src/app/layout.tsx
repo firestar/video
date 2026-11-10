@@ -3,9 +3,6 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
 import { ThemeProvider } from "@/lib/theme";
-import Navbar from "@/components/Navbar";
-import SidebarSlot from "@/components/SidebarSlot";
-import { SidebarState } from "@/components/SidebarState";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -22,19 +19,16 @@ export const metadata: Metadata = {
   description: "YouTube clone",
 };
 
+// Root layout: document shell + providers only. The site chrome (Navbar,
+// sidebar, main padding) lives in app/(main)/layout.tsx so that pages outside
+// the (main) group — e.g. /embed/[videoId] — render without it.
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`} suppressHydrationWarning>
       <body className="min-h-screen bg-background text-foreground">
         <ThemeProvider>
           <AuthProvider>
-            <SidebarState>
-              <Navbar />
-              <div className="flex">
-                <SidebarSlot />
-                <main className="flex-1 min-w-0 p-4 sm:p-6">{children}</main>
-              </div>
-            </SidebarState>
+            {children}
           </AuthProvider>
         </ThemeProvider>
       </body>
