@@ -102,7 +102,6 @@ pub fn build_router(state: AppState) -> Router {
             "/api/videos/{id}/like",
             axum::routing::delete(routes::unlike_video),
         )
-        .route("/api/videos/{id}/subtitles", axum::routing::get(routes::list_subtitles))
         .route(
             "/api/videos/{id}/dislike",
             axum::routing::post(routes::dislike_video),
@@ -216,6 +215,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/videos/{id}",
             axum::routing::get(routes::get_video),
+        )
+        .route(
+            "/api/videos/{id}/subtitles",
+            axum::routing::get(routes::list_subtitles),
         )
         .layer(axum::middleware::from_fn(middleware::rate_limit))
         .layer(axum::middleware::from_fn_with_state(

@@ -51,6 +51,15 @@ def run(ctx):
     add_btn = row.locator('button:has-text("Add .vtt / .srt")')
     add_btn.wait_for(state="visible", timeout=10000)
     ui.shot(page, "08 studio panel open")
+    # Genuinely upload the VTT: the panel's "Add .vtt / .srt" button just
+    # clicks a hidden <input type=file>; set the file on it directly (the
+    # language select defaults to "en"). The browser then presigns, PUTs and
+    # registers the track.
+    sub_input = page.locator('input[type="file"][accept*="vtt"]')
+    sub_input.wait_for(state="attached", timeout=10000)
+    sub_input.set_input_files(vtt_path)
+    # Give the browser a beat to start the presign/PUT/register before polling.
+    time.sleep(3)
     # Poll the API until the track is registered.
     tracks = None
     t0 = time.time()
