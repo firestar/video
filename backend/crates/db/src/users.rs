@@ -16,6 +16,10 @@ pub struct UserRow {
     pub password_hash: String,
     pub avatar_url: Option<String>,
     pub bio: Option<String>,
+    /// Optional date of birth (age gating; never exposed publicly).
+    pub date_of_birth: Option<chrono::NaiveDate>,
+    /// When the user self-declared being 18+ (only used when no DOB is set).
+    pub age_confirmed_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -28,6 +32,8 @@ impl From<UserRow> for User {
             channel_name: r.channel_name,
             avatar_url: r.avatar_url,
             bio: r.bio,
+            date_of_birth: r.date_of_birth,
+            age_confirmed_at: r.age_confirmed_at,
             created_at: r.created_at,
         }
     }
@@ -42,6 +48,8 @@ fn row_to_user(row: sqlx::postgres::PgRow) -> Result<UserRow, sqlx::Error> {
         password_hash: row.try_get("password_hash")?,
         avatar_url: row.try_get("avatar_url")?,
         bio: row.try_get("bio")?,
+        date_of_birth: row.try_get("date_of_birth")?,
+        age_confirmed_at: row.try_get("age_confirmed_at")?,
         created_at: row.try_get("created_at")?,
     })
 }
@@ -166,19 +174,22 @@ pub async fn update_avatar(
     row.map(row_to_user).transpose()
 }
 
-/// Update the user's profile (name, email, bio). All three are the final
-/// values the handler computed from the current row + the request; `bio`
-/// is None when cleared.
+/// Update the user's profile (name, email, bio, date of birth). All are the
+/// final values the handler computed from the current row + the request;
+/// `bio` is None when cleared; `date_of_birth` is Some(None) when clearing.
 pub async fn update_profile(
     pool: &Pool,
     user_id: Uuid,
     name: &str,
     email: &str,
     bio: Option<String>,
+    date_of_birth: Option<Option<chrono::NaiveDate>>,
 ) -> Result<Option<UserRow>, sqlx::Error> {
+    let dob = date_of_birth.as_ref().and_then(|d| *d);
     let row = sqlx::query(
         r#"
-        UPDATE users SET name = $2, email = $3, bio = $4
+        UPDATE users SET name = $2, email = $3, bio = $4,
+            date_of_birth = CASE WHEN $5::bool THEN $6::date ELSE date_of_birth END
         WHERE id = $1
         RETURNING *
         "#,
@@ -187,6 +198,24 @@ pub async fn update_profile(
     .bind(name)
     .bind(email)
     .bind(bio)
+    .bind(date_of_birth.is_some())
+    .bind(dob)
+    .fetch_optional(pool)
+    .await?;
+    row.map(row_to_user).transpose()
+}
+
+/// Set (or clear with None) the user's 18+ self-confirmation timestamp.
+pub async fn set_age_confirmed(
+    pool: &Pool,
+    user_id: Uuid,
+    at: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<Option<UserRow>, sqlx::Error> {
+    let row = sqlx::query(
+        "UPDATE users SET age_confirmed_at = $2 WHERE id = $1 RETURNING *",
+    )
+    .bind(user_id)
+    .bind(at)
     .fetch_optional(pool)
     .await?;
     row.map(row_to_user).transpose()

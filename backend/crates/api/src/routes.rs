@@ -1,8 +1,10 @@
 use serde_json::json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
+use axum::http::HeaderMap;
 use axum::{Extension, Json};
 use uuid::Uuid;
+use chrono::Datelike;
 
 use auth::encode_token;
 use db::{analytics, channels, comments, history, likes, notifications, playlists, reports, subscriptions, subtitles, users, videos, watch_later};
@@ -36,6 +38,8 @@ pub struct VideoUpdateBody {
     /// Schedule control: absent = unchanged, null = clear schedule (publish
     /// now if ready), timestamp = set a future schedule.
     pub publish_at: Option<Option<chrono::DateTime<chrono::Utc>>>,
+    /// 18+ flag (owner only). Absent = unchanged.
+    pub age_restricted: Option<bool>,
 }
 
 /// Account PATCH body: update the signed-in user's profile.
@@ -46,6 +50,79 @@ pub struct MeUpdateBody {
     pub email: Option<String>,
     /// None = leave unchanged; Some(s) = set (empty string clears it).
     pub bio: Option<String>,
+    /// Date of birth "YYYY-MM-DD". Absent = unchanged; null = clear. Optional
+    /// forever — never required to sign up or use the site.
+    pub date_of_birth: Option<Option<String>>,
+    /// 18+ self-declaration (used when no DOB is set). Absent = unchanged.
+    pub age_confirmed: Option<bool>,
+}
+
+/// Age-verification context for the current request (18+ gating).
+///
+/// A viewer counts as an adult when:
+/// - logged in with a DOB: the DOB says 18+ (DOB always wins — a
+///   self-confirmed but under-18 user stays blocked);
+/// - logged in without a DOB: self-confirmed via `age_confirmed_at`;
+/// - anonymous: carries the `age18=1` cookie set by the age gate.
+/// The channel owner of a video is never gated on their own content.
+struct AgeCtx {
+    user_id: Option<Uuid>,
+    adult: bool,
+}
+
+impl AgeCtx {
+    /// Whether this video's playable content (streams + thumbnail) must be
+    /// withheld from the viewer.
+    fn withholds(&self, channel_owner: Uuid) -> bool {
+        if self.user_id == Some(channel_owner) {
+            return false; // owner bypass
+        }
+        !self.adult
+    }
+}
+
+fn age18_cookie(headers: &HeaderMap) -> bool {
+    headers
+        .get(axum::http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .map(|c| c.split(';').any(|p| p.trim() == "age18=1"))
+        .unwrap_or(false)
+}
+
+fn age_in_years(dob: chrono::NaiveDate, today: chrono::NaiveDate) -> i64 {
+    let mut years = (today.year() - dob.year()) as i64;
+    if (today.month(), today.day()) < (dob.month(), dob.day()) {
+        years -= 1;
+    }
+    years
+}
+
+/// Validate a "YYYY-MM-DD" DOB: parseable, in the past, age <= 120.
+fn parse_dob(s: &str) -> Option<chrono::NaiveDate> {
+    let dob = chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").ok()?;
+    let today = chrono::Utc::now().date_naive();
+    if dob > today {
+        return None;
+    }
+    if age_in_years(dob, today) > 120 {
+        return None;
+    }
+    Some(dob)
+}
+
+async fn age_ctx(state: &AppState, claims: Option<&JwtClaims>, headers: &HeaderMap) -> AgeCtx {
+    let user_id = claims.map(|c| c.sub);
+    let adult = match user_id {
+        Some(uid) => match users::find_by_id(&state.db, uid).await.ok().flatten() {
+            Some(u) => match u.date_of_birth {
+                Some(dob) => age_in_years(dob, chrono::Utc::now().date_naive()) >= 18,
+                None => u.age_confirmed_at.is_some(),
+            },
+            None => false,
+        },
+        None => age18_cookie(headers),
+    };
+    AgeCtx { user_id, adult }
 }
 
 /// Change-password body (authenticated).
@@ -261,6 +338,8 @@ pub async fn login(
 /// sort = "newest" (default) | "trending".
 pub async fn list_videos(
     State(state): State<AppState>,
+    claims: Option<Extension<JwtClaims>>,
+    headers: HeaderMap,
     Query(q): Query<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let limit = q
@@ -280,18 +359,24 @@ pub async fn list_videos(
     );
 
     let rows = videos::list_public(&state.db, limit, offset, sort).await?;
+    let age = age_ctx(&state, claims.as_ref().map(|e| &e.0), &headers).await;
 
     // Batch-load channels for the page.
-    let items = videos_with_channels(&state.db, &state.storage, &rows).await?;
+    let items = videos_with_channels(&state.db, &state.storage, &rows, &age).await?;
 
     Ok(Json(serde_json::Value::Array(items)))
 }
 
-/// Serialize video rows, batch-joining each video's channel and the streamUrl slot.
+
+/// Serialize video rows, batch-joining each video's channel and the streamUrl
+/// slot. 18+ videos: the thumbnail is withheld from viewers who have not
+/// verified their age (lists never carry signed stream URLs, so the
+/// thumbnail is the only playable content to gate here).
 async fn videos_with_channels(
     db: &db::Pool,
     storage: &storage::Storage,
     rows: &[db::videos::VideoRow],
+    age: &AgeCtx,
 ) -> Result<Vec<serde_json::Value>, ApiError> {
     let channel_ids: Vec<Uuid> = rows.iter().map(|r| r.channel_id).collect();
     let channel_rows = channels::find_by_ids(db, &channel_ids).await?;
@@ -314,7 +399,11 @@ async fn videos_with_channels(
             );
             map.insert("streamUrl".into(), serde_json::Value::Null);
             let thumbnail_key = format!("thumbnails/{}.jpg", video.id);
-            let thumbnail_url = if storage.exists(&thumbnail_key).await.unwrap_or(false) {
+            let withhold = video.age_restricted
+                && channel.map_or(true, |c| age.withholds(c.user_id));
+            let thumbnail_url = if withhold {
+                None
+            } else if storage.exists(&thumbnail_key).await.unwrap_or(false) {
                 storage.signed_get(&thumbnail_key, std::time::Duration::from_secs(24 * 3600)).await.ok()
             } else {
                 None
@@ -337,6 +426,7 @@ async fn videos_with_channels(
 pub async fn get_video(
     State(state): State<AppState>,
     claims: Option<Extension<JwtClaims>>,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let row = videos::find_by_id(&state.db, id)
@@ -360,8 +450,16 @@ pub async fn get_video(
     let streams_raw: Option<serde_json::Value> = row.streams.clone();
     let video: Video = row.into();
 
+    // 18+ gate: withhold streams + thumbnail from viewers who have not
+    // verified their age (the owner is never gated on their own content).
+    let age = age_ctx(&state, claims.as_ref().map(|e| &e.0), &headers).await;
+    let withhold = video.age_restricted
+        && channel.as_ref().map_or(true, |ch| age.withholds(ch.user_id));
+
     let ttl = std::time::Duration::from_secs(24 * 3600);
-    let (stream_url, streams_value) = if matches!(video.status, VideoStatus::Ready) {
+    let (stream_url, streams_value) = if withhold {
+        (None, serde_json::Value::Array(Vec::new()))
+    } else if matches!(video.status, VideoStatus::Ready) {
         let parsed: Vec<domain::Stream> = streams_raw
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok())
@@ -400,7 +498,9 @@ pub async fn get_video(
     };
 
     let thumbnail_key = format!("thumbnails/{}.jpg", video.id);
-    let thumbnail_url = if state.storage.exists(&thumbnail_key).await.unwrap_or(false) {
+    let thumbnail_url = if withhold {
+        None
+    } else if state.storage.exists(&thumbnail_key).await.unwrap_or(false) {
         state.storage.signed_get(&thumbnail_key, ttl).await.ok()
     } else {
         None
@@ -443,6 +543,8 @@ pub async fn get_video(
 /// ordered by views. 404 if the video itself doesn't exist.
 pub async fn get_related_videos(
     State(state): State<AppState>,
+    claims: Option<Extension<JwtClaims>>,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
     Query(q): Query<RelatedQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -453,16 +555,20 @@ pub async fn get_related_videos(
 
     let limit = q.limit.unwrap_or(10).clamp(1, 50);
     let rows = videos::find_related(&state.db, id, limit).await?;
-    let items = videos_with_channels(&state.db, &state.storage, &rows).await?;
+    let age = age_ctx(&state, claims.as_ref().map(|e| &e.0), &headers).await;
+    let items = videos_with_channels(&state.db, &state.storage, &rows, &age).await?;
 
     Ok(Json(serde_json::Value::Array(items)))
 }
+
 
 /// GET /api/videos?channelId=... — list all videos (every status) for one
 /// channel. Used by the owner's channel-management (studio) view. Public
 /// (anyone can browse a channel's videos); the frontend gates the page.
 pub async fn list_channel_videos(
     State(state): State<AppState>,
+    claims: Option<Extension<JwtClaims>>,
+    headers: HeaderMap,
     Query(q): Query<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let channel_id = q
@@ -474,7 +580,8 @@ pub async fn list_channel_videos(
     let limit = q.get("limit").and_then(|v| v.as_i64()).unwrap_or(50).clamp(1, 100);
     let offset = q.get("offset").and_then(|v| v.as_i64()).unwrap_or(0).max(0);
     let rows = videos::list_for_channel_all(&state.db, channel_id, limit, offset).await?;
-    let items = videos_with_channels(&state.db, &state.storage, &rows).await?;
+    let age = age_ctx(&state, claims.as_ref().map(|e| &e.0), &headers).await;
+    let items = videos_with_channels(&state.db, &state.storage, &rows, &age).await?;
     Ok(Json(serde_json::Value::Array(items)))
 }
 /// GET /api/channels/{id}/analytics — Studio analytics for a channel (owner only).
@@ -567,6 +674,7 @@ pub async fn update_video(
         body.tags.as_deref(),
         body.visibility.as_deref(),
         body.publish_at,
+        body.age_restricted,
     )
     .await?
     .ok_or(ApiError::NotFound)?;
@@ -845,6 +953,8 @@ pub async fn toggle_comment_like(
 /// Full-text video search (title/description) + channel name match.
 pub async fn search(
     State(state): State<AppState>,
+    claims: Option<Extension<JwtClaims>>,
+    headers: HeaderMap,
     Query(q): Query<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let term = q
@@ -889,7 +999,8 @@ pub async fn search(
         channels::search(&state.db, &term, limit).await?
     };
 
-    let vids = videos_with_channels(&state.db, &state.storage, &video_rows).await?;
+    let age = age_ctx(&state, claims.as_ref().map(|e| &e.0), &headers).await;
+    let vids = videos_with_channels(&state.db, &state.storage, &video_rows, &age).await?;
     let chans: Vec<domain::Channel> = channel_rows.into_iter().map(Into::into).collect();
 
     Ok(Json(json!({
@@ -1420,10 +1531,15 @@ pub async fn me(
         "bio": user.as_ref().and_then(|u| u.bio.clone()),
         "avatarUrl": user.as_ref().and_then(|u| u.avatar_url.clone()),
         "channelId": channel_row.map(|r| r.id.to_string()),
+        // Own-account only — never exposed in any public response.
+        "dateOfBirth": user.as_ref().and_then(|u| u.date_of_birth),
+        "ageConfirmed": user.as_ref().map(|u| u.age_confirmed_at.is_some()).unwrap_or(false),
     }))
 }
 
-/// PATCH /api/me — update the signed-in user's name / email / bio.
+/// PATCH /api/me — update the signed-in user's name / email / bio / DOB /
+/// 18+ self-declaration. DOB is optional forever; the self-declaration is
+/// refused when the stored DOB says under 18 (DOB always wins).
 pub async fn update_me(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -1465,9 +1581,53 @@ pub async fn update_me(
         }
     };
 
-    let updated = users::update_profile(&state.db, claims.sub, &new_name, &new_email, new_bio)
-        .await?
-        .ok_or(ApiError::NotFound)?;
+    // DOB: absent = unchanged; null = clear; value = validated "YYYY-MM-DD".
+    let new_dob = match req.date_of_birth {
+        None => None,
+        Some(None) => Some(None),
+        Some(Some(s)) => {
+            let dob = parse_dob(&s).ok_or_else(|| {
+                ApiError::BadRequest(
+                    "dateOfBirth must be a valid YYYY-MM-DD date in the past (age <= 120)".into(),
+                )
+            })?;
+            Some(Some(dob))
+        }
+    };
+
+    let updated = users::update_profile(
+        &state.db,
+        claims.sub,
+        &new_name,
+        &new_email,
+        new_bio,
+        new_dob,
+    )
+    .await?
+    .ok_or(ApiError::NotFound)?;
+
+    // 18+ self-declaration: only meaningful when no DOB is set (DOB wins).
+    let updated = match req.age_confirmed {
+        None => updated,
+        Some(true) => {
+            if updated.date_of_birth.map_or(false, |dob| {
+                age_in_years(dob, chrono::Utc::now().date_naive()) < 18
+            }) {
+                return Err(ApiError::BadRequest(
+                    "date of birth indicates under 18 — the 18+ declaration cannot be set".into(),
+                ));
+            }
+            users::set_age_confirmed(&state.db, claims.sub, Some(chrono::Utc::now()))
+                .await?
+                .ok_or(ApiError::NotFound)?
+        }
+        Some(false) => {
+            users::set_age_confirmed(&state.db, claims.sub, None)
+                .await?
+                .ok_or(ApiError::NotFound)?
+        }
+    };
+
     Ok(Json(serde_json::json!({
         "id": updated.id,
         "email": updated.email,
@@ -1475,6 +1635,31 @@ pub async fn update_me(
         "channelName": updated.channel_name,
         "bio": updated.bio,
         "avatarUrl": updated.avatar_url,
+        "dateOfBirth": updated.date_of_birth,
+        "ageConfirmed": updated.age_confirmed_at.is_some(),
+    })))
+}
+
+/// POST /api/age-confirm — the age gate's "I am 18 or older" for logged-in
+/// users without a DOB. Refused when the stored DOB says under 18.
+pub async fn confirm_age(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let row = users::find_by_id(&state.db, claims.sub).await?.ok_or(ApiError::NotFound)?;
+    if let Some(dob) = row.date_of_birth {
+        if age_in_years(dob, chrono::Utc::now().date_naive()) < 18 {
+            return Err(ApiError::BadRequest(
+                "date of birth indicates under 18".into(),
+            ));
+        }
+    }
+    let updated = users::set_age_confirmed(&state.db, claims.sub, Some(chrono::Utc::now()))
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    Ok(Json(serde_json::json!({
+        "ageConfirmed": true,
+        "dateOfBirth": updated.date_of_birth,
     })))
 }
 
@@ -1544,13 +1729,15 @@ pub async fn create_report(
 pub async fn history(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
+    headers: HeaderMap,
     Query(q): Query<HistoryQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let limit = q.limit.unwrap_or(30).clamp(1, 100);
     let rows = history::list_for_user(&state.db, claims.sub, limit).await?;
     let video_ids: Vec<Uuid> = rows.iter().map(|h| h.video_id).collect();
     let video_rows = videos::find_by_id_all(&state.db, &video_ids).await?;
-    let videos_json = videos_with_channels(&state.db, &state.storage, &video_rows).await?;
+    let age = age_ctx(&state, Some(&claims), &headers).await;
+    let videos_json = videos_with_channels(&state.db, &state.storage, &video_rows, &age).await?;
     let video_by_id: std::collections::HashMap<String, serde_json::Value> = videos_json
         .into_iter()
         .map(|v| {
@@ -1589,12 +1776,14 @@ pub async fn history(
 pub async fn home_feed(
     State(state): State<AppState>,
     claims: Option<Extension<JwtClaims>>,
+    headers: HeaderMap,
     Query(q): Query<HomeFeedQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let limit = q.limit.unwrap_or(24).clamp(1, 100) as usize;
     let pool = &state.db;
 
-    let maybe_user = claims.map(|c| c.sub);
+    let maybe_user = claims.as_ref().map(|c| c.sub);
+    let age = age_ctx(&state, claims.as_ref().map(|e| &e.0), &headers).await;
     let history_rows = match maybe_user {
         Some(uid) => history::list_for_user(pool, uid, 50).await?,
         None => Vec::new(),
@@ -1605,7 +1794,7 @@ pub async fn home_feed(
     // If no history, just return trending rows.
     if history_rows.is_empty() {
         let selected = pool_rows.iter().take(limit).cloned().collect::<Vec<_>>();
-        let videos_json = videos_with_channels(pool, &state.storage, &selected).await?;
+        let videos_json = videos_with_channels(pool, &state.storage, &selected, &age).await?;
         let mut reasons = serde_json::Map::new();
         for v in &videos_json {
             let vid = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
@@ -1652,7 +1841,7 @@ pub async fn home_feed(
     scored.sort_by_key(|b| std::cmp::Reverse(b.0));
 
     let selected: Vec<db::videos::VideoRow> = scored.iter().take(limit).map(|(_, r, _)| r.clone()).collect();
-    let videos_json = videos_with_channels(pool, &state.storage, &selected).await?;
+    let videos_json = videos_with_channels(pool, &state.storage, &selected, &age).await?;
 
     let mut reasons = serde_json::Map::new();
     for v in &videos_json {
@@ -1673,13 +1862,18 @@ pub struct ShortsQuery {
     limit: Option<i64>,
 }
 
-/// GET /api/shorts — feed of short-form videos (newest first), with channel info.
+/// GET /api/shorts — feed of short-form videos (newest first), with channel
+/// info. 18+ videos are excluded for viewers who have not verified their age
+/// (a shorts feed cannot show an unplayable card).
 pub async fn list_shorts(
     State(state): State<AppState>,
+    claims: Option<Extension<JwtClaims>>,
+    headers: HeaderMap,
     Query(q): Query<ShortsQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let limit = q.limit.unwrap_or(30).clamp(1, 100);
-    let rows = videos::list_shorts(&state.db, limit).await?;
+    let age = age_ctx(&state, claims.as_ref().map(|e| &e.0), &headers).await;
+    let rows = videos::list_shorts(&state.db, limit, !age.adult, age.user_id).await?;
     Ok(Json(serde_json::json!({ "shorts": rows })))
 }
 
@@ -1777,9 +1971,11 @@ pub async fn unlike_video(
 pub async fn list_watch_later(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
+    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let rows = watch_later::list_for_user(&state.db, claims.sub).await?;
-    let videos = videos_with_channels(&state.db, &state.storage, &rows).await?;
+    let age = age_ctx(&state, Some(&claims), &headers).await;
+    let videos = videos_with_channels(&state.db, &state.storage, &rows, &age).await?;
     Ok(Json(json!({ "videos": videos })))
 }
 
@@ -1834,11 +2030,12 @@ pub async fn record_view(
 pub async fn get_channel(
     State(state): State<AppState>,
     claims: Option<Extension<JwtClaims>>,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
     Query(q): Query<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let is_subscribed = match claims {
-        Some(Extension(c)) => subscriptions::is_subscribed(&state.db, c.sub, id).await?,
+        Some(Extension(ref c)) => subscriptions::is_subscribed(&state.db, c.sub, id).await?,
         None => false,
     };
 
@@ -1861,7 +2058,8 @@ pub async fn get_channel(
         .max(0);
 
     let video_rows = videos::list_for_channel(&state.db, id, limit, offset).await?;
-    let videos_json = videos_with_channels(&state.db, &state.storage, &video_rows).await?;
+    let age = age_ctx(&state, claims.as_ref().map(|e| &e.0), &headers).await;
+    let videos_json = videos_with_channels(&state.db, &state.storage, &video_rows, &age).await?;
     let (video_count, total_views) = videos::count_and_views_for_channel(&state.db, id).await?;
 
     let mut channel_json = serde_json::to_value(&channel).unwrap();
@@ -2090,6 +2288,7 @@ pub async fn list_playlists(
 pub async fn get_playlist(
     State(state): State<AppState>,
     claims: Option<Extension<JwtClaims>>,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let row = playlists::find_by_id(&state.db, id)
@@ -2107,7 +2306,8 @@ pub async fn get_playlist(
     let video_ids = playlists::video_ids(&state.db, id).await?;
     let video_rows = videos::find_by_id_all(&state.db, &video_ids).await?;
     // Keep position order (find_by_id_all returns in input order).
-    let videos_json = videos_with_channels(&state.db, &state.storage, &video_rows).await?;
+    let age = age_ctx(&state, claims.as_ref().map(|e| &e.0), &headers).await;
+    let videos_json = videos_with_channels(&state.db, &state.storage, &video_rows, &age).await?;
 
     Ok(Json(serde_json::json!({
         "playlist": serde_json::to_value(&p).unwrap(),

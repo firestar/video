@@ -31,6 +31,8 @@ pub struct VideoRow {
     /// `[{"quality":"1080p",...,"objectKey":"videos/<id>_1080p.mp4"}]`.
     pub streams: Option<serde_json::Value>,
     pub is_short: bool,
+    /// 18+ content flag (owner-set).
+    pub age_restricted: bool,
 }
 
 fn status_to_enum(s: &str) -> VideoStatus {
@@ -76,6 +78,7 @@ impl From<VideoRow> for Video {
             publish_at: r.publish_at,
             created_at: r.created_at,
             is_short: r.is_short,
+            age_restricted: r.age_restricted,
         }
     }
 }
@@ -112,6 +115,7 @@ pub async fn update(
     tags: Option<&[String]>,
     visibility: Option<&str>,
     publish_at: Option<Option<chrono::DateTime<chrono::Utc>>>,
+    age_restricted: Option<bool>,
 ) -> Result<Option<VideoRow>, sqlx::Error> {
     // publish_at: None = leave unchanged, Some(None) = clear the schedule,
     // Some(Some(t)) = set a new schedule.
@@ -123,7 +127,8 @@ pub async fn update(
             description = CASE WHEN $3::TEXT IS NULL THEN description ELSE $3 END,
             tags = COALESCE($4, tags),
             visibility = COALESCE($5, visibility),
-            publish_at = CASE WHEN $6::bool THEN $7::timestamptz ELSE publish_at END
+            publish_at = CASE WHEN $6::bool THEN $7::timestamptz ELSE publish_at END,
+            age_restricted = COALESCE($8, age_restricted)
         WHERE id = $1
         RETURNING *
         "#,
@@ -135,6 +140,7 @@ pub async fn update(
     .bind(visibility)
     .bind(publish_at.is_some())
     .bind(new_schedule)
+    .bind(age_restricted)
     .fetch_optional(pool)
     .await
 }
@@ -318,8 +324,16 @@ pub struct ShortFeedRow {
     pub channel_avatar_url: Option<String>,
 }
 
-/// Shorts feed: ready, public, is_short videos, newest first, with channel info.
-pub async fn list_shorts(pool: &Pool, limit: i64) -> Result<Vec<ShortFeedRow>, sqlx::Error> {
+/// Shorts feed: ready, public, is_short videos, newest first, with channel
+/// info. `hide_age_restricted` drops 18+ videos for viewers who have not
+/// verified their age (a shorts feed cannot show an unplayable card); the
+/// channel owner of a video is never gated on their own content.
+pub async fn list_shorts(
+    pool: &Pool,
+    limit: i64,
+    hide_age_restricted: bool,
+    owner_user_id: Option<Uuid>,
+) -> Result<Vec<ShortFeedRow>, sqlx::Error> {
     sqlx::query_as(
         r#"
         SELECT v.id, v.title, v.thumbnail_url, v.duration_secs, v.view_count, v.like_count, v.created_at,
@@ -329,11 +343,14 @@ pub async fn list_shorts(pool: &Pool, limit: i64) -> Result<Vec<ShortFeedRow>, s
         JOIN users u ON u.id = c.user_id
         WHERE v.is_short = true AND v.status = 'ready' AND v.visibility = 'public'
           AND v.published_at IS NOT NULL AND v.published_at <= now()
+          AND ($2::bool = false OR NOT v.age_restricted OR c.user_id = $3::uuid)
         ORDER BY v.published_at DESC NULLS LAST, v.created_at DESC
         LIMIT $1
         "#,
     )
     .bind(limit)
+    .bind(hide_age_restricted)
+    .bind(owner_user_id)
     .fetch_all(pool)
     .await
 }

@@ -12,6 +12,11 @@ pub struct User {
     pub channel_name: String,
     pub avatar_url: Option<String>,
     pub bio: Option<String>,
+    /// Optional date of birth ("YYYY-MM-DD"). Never required; used only for
+    /// age gating and never exposed in public responses.
+    pub date_of_birth: Option<chrono::NaiveDate>,
+    /// When the user self-declared being 18+ (used only when no DOB is set).
+    pub age_confirmed_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -95,6 +100,8 @@ mod tests {
             channel_name: "chan".into(),
             avatar_url: None,
             bio: None,
+            date_of_birth: None,
+            age_confirmed_at: None,
             created_at: Utc::now(),
         };
         let s = serde_json::to_string(&u).unwrap();

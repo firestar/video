@@ -73,6 +73,9 @@ pub struct Video {
     pub created_at: DateTime<Utc>,
     /// Short-form vertical video (user-flagged at upload).
     pub is_short: bool,
+    /// 18+ content flag (owner-set). Streams + thumbnail are withheld from
+    /// viewers who have not verified their age.
+    pub age_restricted: bool,
 }
 /// One chapter parsed from a video description (YouTube-style timestamps).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -390,6 +393,7 @@ mod tests {
             publish_at: None,
             created_at: Utc::now(),
             is_short: false,
+            age_restricted: false,
         };
         let s = serde_json::to_string(&v).unwrap();
         assert!(s.contains("\"channelId\""));

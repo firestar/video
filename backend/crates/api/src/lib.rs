@@ -54,6 +54,10 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::get(routes::list_comments_threaded),
         )
         .layer(axum::middleware::from_fn(middleware::rate_limit))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::optional_auth_middleware,
+        ))
         .with_state(state.clone());
 
     // /api/home/feed: public, but personalized when a valid token is present.
@@ -74,6 +78,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/me",
             axum::routing::get(routes::me).patch(routes::update_me),
+        )
+        .route(
+            "/api/age-confirm",
+            axum::routing::post(routes::confirm_age),
         )
         .route(
             "/api/auth/change-password",
@@ -200,6 +208,10 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::get(routes::list_videos)
                 .post(routes::create_video_with_auth),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::optional_auth_middleware,
+        ))
         .with_state(state.clone());
     // /api/shorts: public Shorts feed.
     let shorts_routes = Router::new()
@@ -207,6 +219,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/shorts",
             axum::routing::get(routes::list_shorts),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::optional_auth_middleware,
+        ))
         .with_state(state.clone());
     // /api/videos/{id}: GET is public but visibility-gated (private videos
     // are owner-only), so it runs under optional auth; rate-limited like the
