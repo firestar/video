@@ -69,7 +69,7 @@ function StudioContent() {
   }, [user]);
 
   const [editing, setEditing] = useState<string | null>(null);
-  const [draft, setDraft] = useState({ title: "", description: "", tags: "", visibility: "public" as VideoVisibility, publishAt: "" });
+  const [draft, setDraft] = useState({ title: "", description: "", tags: "", visibility: "public" as VideoVisibility, publishAt: "", ageRestricted: false });
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -82,6 +82,7 @@ function StudioContent() {
       tags: (v.tags ?? []).join(", "),
       visibility: v.visibility ?? "public",
       publishAt: toLocalInput(v.publishAt),
+      ageRestricted: v.ageRestricted ?? false,
     });
     setSavedMsg(null);
   };
@@ -105,6 +106,7 @@ function StudioContent() {
           .filter(Boolean),
         visibility: draft.visibility,
         publishAt: draft.publishAt ? new Date(draft.publishAt).toISOString() : null,
+        ageRestricted: draft.ageRestricted,
       };
       const updated: Video = await apiFetch(`/api/videos/${v.id}`, {
         method: "PATCH",
@@ -490,6 +492,18 @@ function StudioContent() {
                           <option value="private">Private — only you</option>
                         </select>
                       </div>
+                       <div className="flex items-center gap-2">
+                         <input
+                           id="age-restrict"
+                           type="checkbox"
+                           checked={draft.ageRestricted}
+                           onChange={(e) => setDraft({ ...draft, ageRestricted: e.target.checked })}
+                           className="size-4 accent-red-600"
+                         />
+                         <label htmlFor="age-restrict" className="text-xs font-medium text-muted-foreground">
+                           Age-restrict this video (18+)
+                         </label>
+                       </div>
                       <div>
                         <label className="text-xs font-medium text-muted-foreground">Schedule publish (empty = publish now)</label>
                         <input
@@ -522,6 +536,9 @@ function StudioContent() {
                             }>
                               {v.visibility ?? "public"}
                             </span>
+                             {v.ageRestricted && (
+                               <span className="rounded bg-red-600/15 px-1.5 py-0.5 font-semibold text-red-500">18+</span>
+                             )}
                             <span>{v.status}</span>
                             {v.publishAt && (
                               <span className="font-medium text-emerald-500">

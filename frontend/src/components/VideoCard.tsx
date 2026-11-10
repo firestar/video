@@ -40,6 +40,11 @@ export default function VideoCard({ video, reason }: { video: Video; reason?: st
             {reasonLabel}
           </span>
         )}
+        {video.ageRestricted && (
+          <span className="absolute top-1.5 right-1.5 rounded bg-red-600 px-1.5 py-0.5 text-[11px] font-bold text-white">
+            18+
+          </span>
+        )}
         {video.durationSecs != null && (
           <span className="absolute bottom-1.5 right-1.5 rounded bg-black/80 px-1.5 py-0.5 text-xs font-medium tabular-nums text-white">
             {formatDuration(video.durationSecs)}

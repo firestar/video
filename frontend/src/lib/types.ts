@@ -39,6 +39,8 @@ export interface Video {
   /** Short-form vertical video. */
   isShort?: boolean;
   /** Joined by GET /api/videos (list) — may be null. */
+  /** 18+ age restriction. */
+  ageRestricted?: boolean;
   channel?: Channel;
   /** Feed reason badge (from /api/home/feed): "trending" | "subscription" | "related". */
   reason?: string;

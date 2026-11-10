@@ -34,6 +34,7 @@ MODULES = [
     "test_07_thumbnail",
     "test_08_subtitles",
     "test_09_embed",
+    "test_10_age",
 ]
 
 

@@ -11,6 +11,8 @@ interface MeProfile {
   channel: string;
   bio?: string | null;
   avatarUrl?: string | null;
+  dateOfBirth?: string | null;
+  ageConfirmed?: boolean;
 }
 
 function Banner({ kind, text }: { kind: "ok" | "err"; text: string }) {
@@ -33,10 +35,13 @@ const labelCls = "text-xs font-medium text-muted-foreground";
 
 export default function AccountPage() {
   const { user, updateUser } = useAuth();
-  const [profile, setProfile] = useState({ name: "", email: "", bio: "" });
+  const [profile, setProfile] = useState({ name: "", email: "", bio: "", dateOfBirth: "" });
   const [loaded, setLoaded] = useState(false);
   const [profileMsg, setProfileMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
+  const [savedAge, setSavedAge] = useState<{ dateOfBirth: string | null; confirmed: boolean }>({ dateOfBirth: null, confirmed: false });
+  const [ageBusy, setAgeBusy] = useState(false);
+  const [ageMsg, setAgeMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   const [pw, setPw] = useState({ current: "", next: "", confirm: "" });
   const [pwMsg, setPwMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
@@ -46,7 +51,8 @@ export default function AccountPage() {
     if (!user) return;
     apiFetch<MeProfile>("/api/me")
       .then((me) => {
-        setProfile({ name: me.name, email: me.email, bio: me.bio ?? "" });
+        setProfile({ name: me.name, email: me.email, bio: me.bio ?? "", dateOfBirth: me.dateOfBirth ?? "" });
+        setSavedAge({ dateOfBirth: me.dateOfBirth ?? null, confirmed: me.ageConfirmed ?? false });
         setLoaded(true);
       })
       .catch(() => setLoaded(true));
@@ -67,17 +73,31 @@ export default function AccountPage() {
     setSavingProfile(true);
     setProfileMsg(null);
     try {
-      const res = await apiFetch<{ name: string; email: string }>("/api/me", {
+      const res = await apiFetch<{ name: string; email: string; dateOfBirth?: string | null; ageConfirmed?: boolean }>("/api/me", {
         method: "PATCH",
-        body: JSON.stringify({ name: profile.name, email: profile.email, bio: profile.bio }),
+        body: JSON.stringify({ name: profile.name, email: profile.email, bio: profile.bio, dateOfBirth: profile.dateOfBirth ? profile.dateOfBirth : null }),
       });
       // Refresh the auth context so the navbar reflects the new name/email.
       updateUser({ ...user, name: res.name, email: res.email });
+      setSavedAge({ dateOfBirth: res.dateOfBirth ?? null, confirmed: res.ageConfirmed ?? false });
       setProfileMsg({ kind: "ok", text: "Profile saved." });
     } catch (err) {
       setProfileMsg({ kind: "err", text: (err as Error).message });
     } finally {
       setSavingProfile(false);
+    }
+  };
+  const confirmAge = async () => {
+    setAgeBusy(true);
+    setAgeMsg(null);
+    try {
+      const res = await apiFetch<{ ageConfirmed: boolean; dateOfBirth?: string | null }>("/api/age-confirm", { method: "POST" });
+      setSavedAge({ dateOfBirth: res.dateOfBirth ?? null, confirmed: res.ageConfirmed });
+      setAgeMsg({ kind: "ok", text: "Thanks — you're verified as 18 or older." });
+    } catch (err) {
+      setAgeMsg({ kind: "err", text: (err as Error).message });
+    } finally {
+      setAgeBusy(false);
     }
   };
 
@@ -148,11 +168,46 @@ export default function AccountPage() {
             />
           </div>
           <div>
+            <label className={labelCls}>Date of birth</label>
+            <input
+              className={inputCls}
+              type="date"
+              value={profile.dateOfBirth}
+              onChange={(e) => setProfile({ ...profile, dateOfBirth: e.target.value })}
+            />
+            <p className="mt-1 text-xs text-muted-foreground">Optional. Used to verify you're 18+ for age-restricted videos.</p>
+          </div>
+          <div>
             <Button type="submit" disabled={savingProfile || !loaded}>
               {savingProfile ? "Saving…" : "Save profile"}
             </Button>
           </div>
         </form>
+      </section>
+      <section className="mb-8 rounded-lg border border-border bg-background p-5">
+        <h2 className="mb-4 text-base font-semibold">Age verification</h2>
+        {ageMsg && <Banner kind={ageMsg.kind} text={ageMsg.text} />}
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-muted-foreground">
+            {savedAge.dateOfBirth ? `Date of birth on file: ${savedAge.dateOfBirth}` : "No date of birth on file."}
+          </p>
+          {savedAge.confirmed ? (
+            <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400">
+              You're verified as 18 or older.
+            </p>
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground">
+                Confirm you're 18 or older to watch age-restricted videos.
+              </p>
+              <div>
+                <Button onClick={confirmAge} disabled={ageBusy}>
+                  {ageBusy ? "Confirming…" : "I am 18 or older"}
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
       </section>
 
       <section className="rounded-lg border border-border bg-background p-5">

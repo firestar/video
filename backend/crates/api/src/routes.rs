@@ -42,6 +42,34 @@ pub struct VideoUpdateBody {
     pub age_restricted: Option<bool>,
 }
 
+/// Tri-state date-of-birth update for PATCH /api/me.
+///
+/// `Option<Option<String>>` cannot express "clear": serde maps both an absent
+/// key and a JSON `null` to the outer `None`, so the inner `None` (clear) is
+/// unreachable. This newtype restores the three-way distinction:
+///   - absent key -> Unchanged (via `#[serde(default)]`)
+///   - `null`     -> Clear
+///   - a string   -> Set(s)
+#[derive(Debug, Clone, Default)]
+pub enum DobUpdate {
+    #[default]
+    Unchanged,
+    Clear,
+    Set(String),
+}
+
+impl<'de> serde::Deserialize<'de> for DobUpdate {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let v = Option::<String>::deserialize(deserializer)?;
+        Ok(match v {
+            None => DobUpdate::Clear,
+            Some(s) => DobUpdate::Set(s),
+        })
+    }
+}
 /// Account PATCH body: update the signed-in user's profile.
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,7 +80,8 @@ pub struct MeUpdateBody {
     pub bio: Option<String>,
     /// Date of birth "YYYY-MM-DD". Absent = unchanged; null = clear. Optional
     /// forever — never required to sign up or use the site.
-    pub date_of_birth: Option<Option<String>>,
+    #[serde(default)]
+    pub date_of_birth: DobUpdate,
     /// 18+ self-declaration (used when no DOB is set). Absent = unchanged.
     pub age_confirmed: Option<bool>,
 }
@@ -1583,9 +1612,9 @@ pub async fn update_me(
 
     // DOB: absent = unchanged; null = clear; value = validated "YYYY-MM-DD".
     let new_dob = match req.date_of_birth {
-        None => None,
-        Some(None) => Some(None),
-        Some(Some(s)) => {
+        DobUpdate::Unchanged => None,
+        DobUpdate::Clear => Some(None),
+        DobUpdate::Set(s) => {
             let dob = parse_dob(&s).ok_or_else(|| {
                 ApiError::BadRequest(
                     "dateOfBirth must be a valid YYYY-MM-DD date in the past (age <= 120)".into(),

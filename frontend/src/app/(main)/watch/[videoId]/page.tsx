@@ -66,6 +66,8 @@ function WatchContent() {
   const [newPlaylistTitle, setNewPlaylistTitle] = useState("");
   const [newPlaylistBusy, setNewPlaylistBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [ageBusy, setAgeBusy] = useState(false);
+  const [ageError, setAgeError] = useState<string | null>(null);
   const shareVideo = useCallback(async () => {
     const url = `${window.location.origin}/watch/${videoId}`;
     try {
@@ -292,6 +294,29 @@ function WatchContent() {
   const activeStream =
     streams.find((s) => s.quality === quality) ?? streams[0] ?? null;
   const currentUrl = activeStream?.url ?? data?.streamUrl ?? null;
+  const ageGated = !!(
+    data &&
+    data.video.ageRestricted &&
+    !data.isOwner &&
+    data.video.status === "ready" &&
+    streams.length === 0
+  );
+  const confirmAge = useCallback(async () => {
+    setAgeBusy(true);
+    setAgeError(null);
+    try {
+      if (getToken()) {
+        await apiFetch("/api/age-confirm", { method: "POST" });
+      } else {
+        document.cookie = "age18=1; path=/; max-age=31536000; SameSite=Lax";
+      }
+      window.location.reload();
+    } catch (e) {
+      setAgeError((e as Error).message);
+    } finally {
+      setAgeBusy(false);
+    }
+  }, []);
 
   const switchQuality = useCallback((q: string) => {
     setQualityMenuOpen(false);
@@ -542,7 +567,32 @@ function WatchContent() {
     <div className="mx-auto w-full max-w-[1750px] flex-1 px-4 py-4 lg:px-8">
       <div className={`flex flex-col gap-6 lg:gap-8 ${theater ? "" : "lg:flex-row"}`}>
         <div className="min-w-0 flex-1">
-           {currentUrl ? (
+           {ageGated ? (
+              <div className="flex aspect-video w-full flex-col items-center justify-center gap-4 rounded-lg bg-black/80 px-6 text-center">
+                <span className="rounded bg-red-600 px-2 py-1 text-sm font-bold text-white">18+</span>
+                <h2 className="text-lg font-semibold text-white">This video is for viewers 18 and over</h2>
+                <p className="max-w-md text-sm text-white/70">
+                  {user
+                    ? "Confirm you are 18 or older to watch this video, or set your date of birth in your account."
+                    : "Confirm you are 18 or older to watch this video, or log in to verify your age."}
+                </p>
+                {ageError && <p className="text-sm text-red-400">{ageError}</p>}
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                  <Button onClick={confirmAge} disabled={ageBusy}>
+                    {ageBusy ? "Confirming…" : "I am 18 or older"}
+                  </Button>
+                  {user ? (
+                    <Button variant="outline" onClick={() => { window.location.href = "/account"; }}>
+                      Set date of birth
+                    </Button>
+                  ) : (
+                    <Button variant="outline" onClick={() => { window.location.href = "/login"; }}>
+                      Log in
+                    </Button>
+                  )}
+                </div>
+              </div>
+           ) : currentUrl ? (
              <div className="relative" ref={playerRef}>
                <video
                  key={videoId}

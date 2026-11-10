@@ -194,7 +194,8 @@ class Ctx:
         return self._video_paths[key]
 
     def upload_video(self, key, role="owner", title=None, description=None,
-                     tags=None, vertical=False, color="blue", is_short=False):
+                     tags=None, vertical=False, color="blue", is_short=False,
+                     age_restricted=False):
         """Upload a real video via the API (presign + PUT + create). Returns id."""
         u = self.user(role)
         if not u:
@@ -237,7 +238,17 @@ class Ctx:
         ok = s in (200, 201) and isinstance(v, dict) and "video" in v
         self.results.check(f"create video {key}", ok, f"got {s}: {v}")
         if ok:
-            self.videos[key] = v["video"]["id"]
+            vid = v["video"]["id"]
+            if age_restricted:
+                # The create endpoint doesn't accept the 18+ flag; set it via
+                # PATCH — the same path the Studio checkbox uses.
+                s2, v2 = self.client.patch(f"/api/videos/{vid}", token=u["token"],
+                                           body={"ageRestricted": True})
+                self.results.check(f"set ageRestricted on {key}",
+                                   s2 == 200 and isinstance(v2, dict)
+                                   and v2.get("ageRestricted") is True,
+                                   f"got {s2}: {v2}")
+            self.videos[key] = vid
             return self.videos[key]
         return None
 
