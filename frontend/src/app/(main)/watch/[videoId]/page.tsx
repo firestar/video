@@ -849,13 +849,14 @@ function WatchContent() {
                            <X className="size-4" />
                          </button>
                        </div>
-                       <textarea
-                         readOnly
-                         rows={3}
-                         value={getEmbedSnippet()}
-                         onFocus={(e) => e.currentTarget.select()}
-                         className="w-full resize-none rounded-md border border-border bg-muted/50 p-2 font-mono text-xs"
-                       />
+                        <textarea
+                          readOnly
+                          rows={3}
+                          aria-label="Embed code"
+                          value={getEmbedSnippet()}
+                          onFocus={(e) => e.currentTarget.select()}
+                          className="w-full resize-none rounded-md border border-border bg-muted/50 p-2 font-mono text-xs"
+                        />
                        <Button size="sm" className="mt-2 w-full" onClick={copyEmbed}>
                          {embedCopied ? "Copied!" : "Copy embed code"}
                        </Button>
