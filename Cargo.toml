@@ -35,11 +35,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # auth
-jsonwebtoken = "9"
+# v10 needs an explicit crypto backend; aws_lc_rs is already in the tree via rustls (avoids the rsa crate).
+jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
 argon2 = "0.6"
 
 # storage
-aws-sdk-s3 = "1"
+# default-features off drops the legacy `rustls` feature (hyper 0.14 / rustls 0.21 /
+# rustls-webpki 0.101); `default-https-client` keeps the modern rustls 0.23 client.
+aws-sdk-s3 = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio", "sigv4a"] }
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 
 # redis
