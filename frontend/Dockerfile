@@ -1,4 +1,5 @@
-FROM node:22-alpine AS builder
+# Pinned patch tag: the kaiad builder caches floating tags (node:22-alpine stayed on 22.23.4).
+FROM node:22.23.5-alpine AS builder
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -11,7 +12,7 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
 RUN npm run build
 
-FROM node:22-alpine
+FROM node:22.23.5-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=builder /app/package.json /app/package-lock.json ./
